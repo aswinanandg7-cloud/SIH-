@@ -1,0 +1,51 @@
+# Root .gitignore for SIH Agricultural Procurement Repository
+
+# Dependencies & Build Output
+node_modules/
+sih-mobile-frontend/node_modules/
+sih-mobile-frontend/dist/
+sih-mobile-frontend/.vite/
+
+# Python & Backend (sih-backend)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Keycloak Data & Storage
+keycloak/postgres_data/
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
