@@ -2,6 +2,7 @@ import React from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 import { ProcurementPlanning } from './components/ProcurementPlanning';
+import { TokenSlotVisibility } from './components/TokenSlotVisibility';
 import { AccessDenied } from './components/AccessDenied';
 import './App.css';
 
@@ -22,10 +23,14 @@ const MainContent: React.FC = () => {
     return <LoginScreen />;
   }
 
-  // Check for the required role 'govt-agri-officer'
-  const REQUIRED_ROLE = 'govt-agri-officer';
-  const hasOfficerRole = user.roles?.some(
-    (role) => role.toLowerCase() === REQUIRED_ROLE.toLowerCase()
+  const userRoles = user.roles || [];
+
+  const hasOfficerRole = userRoles.some(
+    (role) => role.toLowerCase() === 'govt-agri-officer'
+  );
+
+  const hasClerkRole = userRoles.some(
+    (role) => role.toLowerCase() === 'govt-agri-clerk'
   );
 
   // Route 2: Authenticated with govt-agri-officer -> Procurement Planning Dashboard
@@ -33,7 +38,12 @@ const MainContent: React.FC = () => {
     return <ProcurementPlanning />;
   }
 
-  // Route 3: Authenticated without required role -> Access Denied error screen
+  // Route 3: Authenticated with govt-agri-clerk -> Token Slot Visibility Page
+  if (hasClerkRole) {
+    return <TokenSlotVisibility />;
+  }
+
+  // Route 4: Authenticated without required roles -> Access Denied error screen
   return <AccessDenied />;
 };
 

@@ -46,3 +46,12 @@ export interface ProcurementPlanItem {
   startDate: string;
   endDate: string;
 }
+
+export interface SlotItem {
+  id: number;
+  center: string;
+  crop: string;
+  time: string;
+  max_capacity: number;
+  remaining: number;
+}

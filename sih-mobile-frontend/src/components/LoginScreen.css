@@ -352,6 +352,16 @@
   background: rgba(16, 185, 129, 0.2);
 }
 
+.clerk-demo {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+}
+
+.clerk-demo:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
 .user-demo {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.3);

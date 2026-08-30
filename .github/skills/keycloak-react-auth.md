@@ -158,10 +158,16 @@ const MainContent: React.FC = () => {
 
   if (!isAuthenticated || !user) return <LoginScreen />;
 
-  const hasOfficerRole = user.roles?.includes('govt-agri-officer');
+  const userRoles = user.roles || [];
+  const hasOfficerRole = userRoles.includes('govt-agri-officer');
+  const hasClerkRole = userRoles.includes('govt-agri-clerk');
 
   if (hasOfficerRole) {
     return <ProcurementPlanning />;
+  }
+
+  if (hasClerkRole) {
+    return <TokenSlotVisibility />;
   }
 
   return <AccessDenied />;

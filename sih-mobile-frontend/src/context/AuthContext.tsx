@@ -10,7 +10,7 @@ interface AuthContextType extends AuthState {
   setRealm: (realm: string) => void;
   clientId: string;
   setClientId: (clientId: string) => void;
-  demoLogin: (role: 'govt-agri-officer' | 'general-user') => void;
+  demoLogin: (role: 'govt-agri-officer' | 'govt-agri-clerk' | 'general-user') => void;
 }
 
 const DEFAULT_KEYCLOAK_URL = 'http://localhost:8080';
@@ -174,20 +174,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Demo login for testing when local Keycloak instance is offline or for quick preview
-  const demoLogin = (role: 'govt-agri-officer' | 'general-user') => {
+  const demoLogin = (role: 'govt-agri-officer' | 'govt-agri-clerk' | 'general-user') => {
     setIsLoading(true);
     setAuthError(null);
 
     setTimeout(() => {
-      const demoRoles =
-        role === 'govt-agri-officer'
-          ? ['govt-agri-officer', 'default-roles-realm', 'offline_access']
-          : ['farmer-user', 'default-roles-realm'];
+      let demoRoles: string[] = [];
+      let demoUsername = '';
+      let demoName = '';
+      let demoEmail = '';
+
+      if (role === 'govt-agri-officer') {
+        demoRoles = ['govt-agri-officer', 'default-roles-realm', 'offline_access'];
+        demoUsername = 'agri_officer_demo';
+        demoName = 'Rajesh Kumar (Agri Officer)';
+        demoEmail = 'officer.rajesh@agri.gov.in';
+      } else if (role === 'govt-agri-clerk') {
+        demoRoles = ['govt-agri-clerk', 'default-roles-realm', 'offline_access'];
+        demoUsername = 'agri_clerk_demo';
+        demoName = 'Anita Sharma (Agri Clerk)';
+        demoEmail = 'clerk.anita@agri.gov.in';
+      } else {
+        demoRoles = ['farmer-user', 'default-roles-realm'];
+        demoUsername = 'farmer_user_demo';
+        demoName = 'Suresh Patel (Farmer)';
+        demoEmail = 'suresh.farmer@mail.com';
+      }
 
       const demoUser: User = {
-        username: role === 'govt-agri-officer' ? 'agri_officer_demo' : 'farmer_user_demo',
-        name: role === 'govt-agri-officer' ? 'Rajesh Kumar (Agri Officer)' : 'Suresh Patel (Farmer)',
-        email: role === 'govt-agri-officer' ? 'officer.rajesh@agri.gov.in' : 'suresh.farmer@mail.com',
+        username: demoUsername,
+        name: demoName,
+        email: demoEmail,
         roles: demoRoles,
       };
 
@@ -195,7 +212,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(demoUser);
       localStorage.setItem('kc_access_token', 'demo_jwt_token_simulation');
       localStorage.setItem('kc_user_data', JSON.stringify(demoUser));
-      setIsLoading(false);
     }, 600);
   };
 

@@ -118,14 +118,21 @@ export const LoginScreen: React.FC = () => {
               className="demo-btn officer-demo"
               onClick={() => demoLogin('govt-agri-officer')}
             >
-              ✅ Test as Officer (With Role)
+              ✅ Test as Officer (govt-agri-officer)
+            </button>
+            <button
+              type="button"
+              className="demo-btn clerk-demo"
+              onClick={() => demoLogin('govt-agri-clerk')}
+            >
+              🎟️ Test as Clerk (govt-agri-clerk)
             </button>
             <button
               type="button"
               className="demo-btn user-demo"
               onClick={() => demoLogin('general-user')}
             >
-              🚫 Test non-Officer (Missing Role)
+              🚫 Test non-Officer/Clerk (Missing Role)
             </button>
           </div>
         </div>
