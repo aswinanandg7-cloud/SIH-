@@ -14,6 +14,11 @@ export default defineConfig({
           Origin: 'http://localhost:8080',
         },
       },
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
     },
   },
 })
