@@ -2,7 +2,7 @@ import React from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 import { ProcurementPlanning } from './components/ProcurementPlanning';
-import { TokenSlotVisibility } from './components/TokenSlotVisibility';
+import { ClerkDashboard } from './components/ClerkDashboard';
 import { AccessDenied } from './components/AccessDenied';
 import './App.css';
 
@@ -38,10 +38,11 @@ const MainContent: React.FC = () => {
     return <ProcurementPlanning />;
   }
 
-  // Route 3: Authenticated with govt-agri-clerk -> Token Slot Visibility Page
+  // Route 3: Authenticated with govt-agri-clerk -> Clerk Dashboard (Procurement Planner & Live Report)
   if (hasClerkRole) {
-    return <TokenSlotVisibility />;
+    return <ClerkDashboard />;
   }
+
 
   // Route 4: Authenticated without required roles -> Access Denied error screen
   return <AccessDenied />;

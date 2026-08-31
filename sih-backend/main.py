@@ -54,6 +54,20 @@ def init_db():
         )
     """)
 
+    # Create Procurement Plans Table for govt-agri-clerk daily planning
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS procurement_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            center_id INTEGER NOT NULL,
+            center_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            limit_tons REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, center_id)
+        )
+    """)
+
     # Populate Initial Static Slots if empty
     cursor.execute("SELECT COUNT(*) FROM slots")
     if cursor.fetchone()[0] == 0:
@@ -79,10 +93,32 @@ def init_db():
 init_db()
 
 
+DEFAULT_PROCUREMENT_CENTERS = [
+    {"center_id": 1, "center_name": "Center 1 - North Cereals Hub", "category": "Cereals", "limit_tons": 500.0},
+    {"center_id": 2, "center_name": "Center 2 - Central Grain Silo", "category": "Cereals", "limit_tons": 450.0},
+    {"center_id": 3, "center_name": "Center 3 - East Pulse Depot", "category": "Pulses", "limit_tons": 300.0},
+    {"center_id": 4, "center_name": "Center 4 - South Legume Yard", "category": "Pulses", "limit_tons": 250.0},
+    {"center_id": 5, "center_name": "Center 5 - West Gram Storage", "category": "Pulses", "limit_tons": 200.0},
+]
+
+
 class BookingRequest(BaseModel):
     farmer_name: str
     farmer_id: str
     slot_id: int
+
+
+class CenterLimitItem(BaseModel):
+    center_id: int
+    center_name: str
+    category: str
+    limit_tons: float
+
+
+class ProcurementPlanRequest(BaseModel):
+    date: str
+    plans: list[CenterLimitItem]
+
 
 
 def generate_unique_token(cursor):
@@ -206,4 +242,78 @@ def verify_token(token: str):
         "crop": matching_slot["crop"] if matching_slot else None,
         "time": matching_slot["time"] if matching_slot else None,
         "message": "Token valid. Farmer marked as ARRIVED.",
+    }
+
+
+# 4. GET PROCUREMENT PLAN (For Clerk Daily Procurement Planning)
+@app.get("/procurement-plan")
+def get_procurement_plan(date: str = None):
+    conn = get_db()
+    cursor = conn.cursor()
+
+    if date:
+        # Check if plan exists for this exact date
+        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (date,))
+        rows = cursor.fetchall()
+        if rows and len(rows) > 0:
+            plans = [
+                {
+                    "center_id": r["center_id"],
+                    "center_name": r["center_name"],
+                    "category": r["category"],
+                    "limit_tons": r["limit_tons"],
+                }
+                for r in rows
+            ]
+            conn.close()
+            return {"date": date, "is_saved": True, "plans": plans}
+
+    # If no plan for target date, fallback to the most recently saved plan across any date
+    cursor.execute("SELECT DISTINCT date FROM procurement_plans ORDER BY id DESC LIMIT 1")
+    last_date_row = cursor.fetchone()
+
+    if last_date_row:
+        last_date = last_date_row["date"]
+        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (last_date,))
+        rows = cursor.fetchall()
+        plans = [
+            {
+                "center_id": r["center_id"],
+                "center_name": r["center_name"],
+                "category": r["category"],
+                "limit_tons": r["limit_tons"],
+            }
+            for r in rows
+        ]
+        conn.close()
+        return {"date": date, "is_saved": False, "copied_from_date": last_date, "plans": plans}
+
+    # If no plan exists in database at all, return DEFAULT_PROCUREMENT_CENTERS
+    conn.close()
+    return {"date": date, "is_saved": False, "plans": DEFAULT_PROCUREMENT_CENTERS}
+
+
+# 5. SAVE / SUBMIT PROCUREMENT PLAN
+@app.post("/procurement-plan")
+def save_procurement_plan(request: ProcurementPlanRequest):
+    conn = get_db()
+    cursor = conn.cursor()
+
+    for item in request.plans:
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO procurement_plans (date, center_id, center_name, category, limit_tons)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (request.date, item.center_id, item.center_name, item.category, item.limit_tons),
+        )
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Daily procurement plan for {request.date} submitted successfully!",
+        "date": request.date,
+        "saved_count": len(request.plans),
     }

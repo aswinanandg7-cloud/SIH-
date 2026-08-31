@@ -55,3 +55,11 @@ export interface SlotItem {
   max_capacity: number;
   remaining: number;
 }
+
+export interface DailyCenterPlan {
+  center_id: number;
+  center_name: string;
+  category: 'Cereals' | 'Pulses' | string;
+  limit_tons: number;
+}
+
