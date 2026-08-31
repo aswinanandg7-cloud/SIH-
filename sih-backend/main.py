@@ -1,34 +1,82 @@
 import random
+import sqlite3
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="SIH Backend — Booking & Verification")
-
-# Enable CORS for frontend integration
+app = FastAPI(title="AgroProcure Unified API (SQLite Engine)")
+# Enable CORS for Frontend & Bot Integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allows requests from any frontend URL (React, Flutter, etc.)
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allows GET, POST, OPTIONS, etc.
+    allow_headers=["*"],  # Allows all headers
 )
 
-# --- Shared data (used by both /book and /verify) ---
-db_slots = [
-    # Center A — Cereals
-    {"id": 1, "center": "Center A", "crop": "Cereals", "time": "09:00 AM - 11:00 AM", "max_capacity": 10},
-    {"id": 2, "center": "Center A", "crop": "Cereals", "time": "11:00 AM - 01:00 PM", "max_capacity": 10},
-    {"id": 3, "center": "Center A", "crop": "Cereals", "time": "02:00 PM - 04:00 PM", "max_capacity": 10},
-    {"id": 4, "center": "Center A", "crop": "Cereals", "time": "04:00 PM - 06:00 PM", "max_capacity": 10},
-    # Center B — Pulses
-    {"id": 5, "center": "Center B", "crop": "Pulses", "time": "09:00 AM - 11:00 AM", "max_capacity": 10},
-    {"id": 6, "center": "Center B", "crop": "Pulses", "time": "11:00 AM - 01:00 PM", "max_capacity": 10},
-    {"id": 7, "center": "Center B", "crop": "Pulses", "time": "02:00 PM - 04:00 PM", "max_capacity": 10},
-    {"id": 8, "center": "Center B", "crop": "Pulses", "time": "04:00 PM - 06:00 PM", "max_capacity": 10},
-]
+DB_FILE = "agroprocure.db"
 
-db_bookings = []
+
+def get_db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")  # actually enforce the FOREIGN KEY constraint below
+    return conn
+
+
+# Initialize SQLite Database Tables
+def init_db():
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Create Slots Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS slots (
+            id INTEGER PRIMARY KEY,
+            center TEXT NOT NULL,
+            crop TEXT NOT NULL,
+            time TEXT NOT NULL,
+            max_capacity INTEGER NOT NULL
+        )
+    """)
+
+    # Create Bookings Table (crop now stored directly, not just via slot lookup)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bookings (
+            token TEXT PRIMARY KEY,
+            farmer_name TEXT NOT NULL,
+            farmer_id TEXT NOT NULL,
+            slot_id INTEGER NOT NULL,
+            crop TEXT NOT NULL,
+            sub_queue_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            FOREIGN KEY (slot_id) REFERENCES slots (id)
+        )
+    """)
+
+    # Populate Initial Static Slots if empty
+    cursor.execute("SELECT COUNT(*) FROM slots")
+    if cursor.fetchone()[0] == 0:
+        initial_slots = [
+            (1, "Center A", "Cereals", "09:00 AM - 11:00 AM", 10),
+            (2, "Center A", "Cereals", "11:00 AM - 01:00 PM", 10),
+            (3, "Center A", "Cereals", "02:00 PM - 04:00 PM", 10),
+            (4, "Center A", "Cereals", "04:00 PM - 06:00 PM", 10),
+            (5, "Center B", "Pulses", "09:00 AM - 11:00 AM", 10),
+            (6, "Center B", "Pulses", "11:00 AM - 01:00 PM", 10),
+            (7, "Center B", "Pulses", "02:00 PM - 04:00 PM", 10),
+            (8, "Center B", "Pulses", "04:00 PM - 06:00 PM", 10),
+        ]
+        cursor.executemany(
+            "INSERT INTO slots (id, center, crop, time, max_capacity) VALUES (?, ?, ?, ?, ?)",
+            initial_slots,
+        )
+
+    conn.commit()
+    conn.close()
+
+
+init_db()
 
 
 class BookingRequest(BaseModel):
@@ -37,20 +85,29 @@ class BookingRequest(BaseModel):
     slot_id: int
 
 
-def generate_unique_token():
+def generate_unique_token(cursor):
     while True:
         token = str(random.randint(100000, 999999))
-        if not any(b["token"] == token for b in db_bookings):
+        cursor.execute("SELECT token FROM bookings WHERE token = ?", (token,))
+        if not cursor.fetchone():
             return token
 
 
-# --- GET /slots ---
+# 1. GET SLOTS
 @app.get("/slots")
 def get_slots():
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM slots")
+    slots = cursor.fetchall()
+
     slots_response = []
-    for slot in db_slots:
-        booked_count = len([b for b in db_bookings if b["slot_id"] == slot["id"]])
+    for slot in slots:
+        cursor.execute("SELECT COUNT(*) FROM bookings WHERE slot_id = ?", (slot["id"],))
+        booked_count = cursor.fetchone()[0]
         slots_left = slot["max_capacity"] - booked_count
+
         slots_response.append({
             "id": slot["id"],
             "center": slot["center"],
@@ -59,34 +116,52 @@ def get_slots():
             "max_capacity": slot["max_capacity"],
             "remaining": slots_left,
         })
+
+    conn.close()
     return {"slots": slots_response}
 
 
-# --- POST /book ---
+# 2. CREATE BOOKING
 @app.post("/book")
 def create_booking(request: BookingRequest):
-    target_slot = next((s for s in db_slots if s["id"] == request.slot_id), None)
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM slots WHERE id = ?", (request.slot_id,))
+    target_slot = cursor.fetchone()
     if not target_slot:
+        conn.close()
         raise HTTPException(status_code=404, detail="Slot not found")
 
-    current_count = len([b for b in db_bookings if b["slot_id"] == request.slot_id])
-    if current_count >= target_slot["max_capacity"]:
+    cursor.execute("SELECT COUNT(*) FROM bookings WHERE slot_id = ?", (request.slot_id,))
+    booked_count = cursor.fetchone()[0]
+
+    if booked_count >= target_slot["max_capacity"]:
+        conn.close()
         raise HTTPException(status_code=400, detail="Slot is full")
 
-    sub_slot_num = current_count + 1
+    sub_slot_num = booked_count + 1
     sub_queue_id = f"SLOT{target_slot['id']}-{sub_slot_num:02d}"
-    token = generate_unique_token()
+    token = generate_unique_token(cursor)
 
-    booking_data = {
-        "token": token,
-        "farmer_name": request.farmer_name,
-        "farmer_id": request.farmer_id,
-        "slot_id": request.slot_id,
-        "crop": target_slot["crop"],
-        "sub_queue_id": sub_queue_id,
-        "status": "BOOKED",
-    }
-    db_bookings.append(booking_data)
+    cursor.execute(
+        """
+        INSERT INTO bookings (token, farmer_name, farmer_id, slot_id, crop, sub_queue_id, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """,
+        (
+            token,
+            request.farmer_name,
+            request.farmer_id,
+            request.slot_id,
+            target_slot["crop"],
+            sub_queue_id,
+            "BOOKED",
+        ),
+    )
+
+    conn.commit()
+    conn.close()
 
     return {
         "status": "SUCCESS",
@@ -98,18 +173,30 @@ def create_booking(request: BookingRequest):
     }
 
 
-# --- POST /verify/{token} ---
+# 3. VERIFY TOKEN
 @app.post("/verify/{token}")
 def verify_token(token: str):
-    target_booking = next((b for b in db_bookings if b["token"] == token), None)
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM bookings WHERE token = ?", (token,))
+    target_booking = cursor.fetchone()
+
     if not target_booking:
+        conn.close()
         raise HTTPException(status_code=404, detail="Invalid token code")
 
     if target_booking["status"] == "ARRIVED":
+        conn.close()
         raise HTTPException(status_code=400, detail="This token has already been used to check in")
 
-    target_booking["status"] = "ARRIVED"
-    matching_slot = next((s for s in db_slots if s["id"] == target_booking["slot_id"]), None)
+    cursor.execute("UPDATE bookings SET status = 'ARRIVED' WHERE token = ?", (token,))
+    conn.commit()
+
+    cursor.execute("SELECT * FROM slots WHERE id = ?", (target_booking["slot_id"],))
+    matching_slot = cursor.fetchone()
+
+    conn.close()
 
     return {
         "status": "VERIFIED",
