@@ -1,38 +1,37 @@
-# SIH Telegram Bot — Quantity-Based Booking Flow (Demo)
+# SIH Telegram Bot — Quantity-Based Booking Flow (Demo, with UX upgrades)
 
-Farmer picks a crop, types how much they're bringing, taps "share location"
-(cosmetic for now), sees 3 centres with quantity left, picks one, and gets
-a token with an **automatically assigned** time slot based on how full
-that centre already is for the day.
+Farmer picks a crop, picks a quantity (preset buttons or custom), shares
+location, sees the 3 **nearest** centres (real distance, not a guess) with
+quantity left, picks one, and gets a token with an auto-assigned time
+slot — plus a QR code pass, estimated MSP payout, and a one-tap Google
+Maps link to the centre.
 
-## Does the code implement what we discussed? — status check
+## What's new in this version
 
-| Feature | Status |
+| Upgrade | Where |
 |---|---|
-| Centres have a daily max quantity capacity | ✅ in `suggested_backend_main.py` (`centers.max_capacity_quintals`) |
-| Farmers book by quantity, not headcount | ✅ `/book` takes `quantity_tons` |
-| 4 time slots per day, filled in quarters of centre capacity | ✅ `slot_index = filled_before // (max_capacity / 4)` |
-| Bot shows "Found your location" + 3 centres with qty left | ✅ `location_received()` in `bot.py` |
-| Location actually used to rank/filter centres | ❌ not yet — see note below |
-| Old `/slots` + `slot_id` booking (previous version) | ❌ replaced — this is a breaking API change |
+| ⚡ Preset quantity buttons (5/10/20/50/100 Qtl + custom) | `bot.py` → `crop_chosen`, `quantity_button_chosen` |
+| 📍 Real haversine distance sorting (no more placeholder coords) | `bot.py` → `haversine_km`, `location_received`; centre lat/lon now live in `suggested_backend_main.py` |
+| 🗺️ One-tap Google Maps navigation link in confirmation | `bot.py` → `center_chosen` |
+| 🎫 QR code digital pass (sent as an image, not just text) | `bot.py` → `make_qr_image`, sent via `send_photo` |
+| 💰 Estimated MSP payout shown in confirmation | `bot.py` → `MSP_PER_QUINTAL` |
 
-**What's still fake for the demo:** the "Found your location!" message
-doesn't actually use GPS to sort centres — it shows whichever centres for
-that crop have enough remaining quantity. That's fine for a demo ("here
-are your options"), but if a judge asks "how did it pick these three,"
-be ready to say it's currently by availability, with real distance-sorting
-as a next step (bring back the haversine logic from before, applied to
-these 3 centres, once real coordinates exist).
+**Not implemented yet** (bigger effort, next in line): voice input,
+multilingual support, `/status` + `/cancel_booking`, congestion balancer.
 
-## ⚠️ This is a breaking backend change
+**On the MSP numbers:** "Cereals" is priced at the current wheat MSP
+(₹2,585/qtl, 2026-27 marketing year) and "Pulses" at the current gram MSP
+(₹5,650/qtl, 2025-26 Rabi season) — these are real government figures as
+of this writing, but MSP is announced fresh each marketing season, so
+double-check at pib.gov.in before your actual demo date in case it's
+moved since.
 
-`suggested_backend_main.py` replaces `/slots` + `slot_id`-based `/book`
-with `/centers` + `center_id`-based `/book`. That affects:
-- Your **frontend** (if it calls `/slots` or sends `slot_id`)
-- Your **admin dashboard** (if it reads booking-by-slot data)
+## ⚠️ Still a breaking backend change
 
-Talk to whoever owns those before swapping this in — don't just replace
-`main.py` unannounced the night before demo.
+`suggested_backend_main.py` uses `/centers` + `center_id`-based `/book`,
+not the original `/slots` + `slot_id`. If your frontend or admin
+dashboard depend on the old shape, coordinate with your team before
+swapping this in.
 
 ## Repo placement
 
@@ -45,8 +44,7 @@ your-repo/
 
 ## 1. Get a bot token from BotFather
 
-1. Telegram → **@BotFather** → `/newbot` → name it, give it a `...bot` username.
-2. Copy the token it gives you.
+Telegram → **@BotFather** → `/newbot` → name it → copy the token.
 
 ## 2. Install & configure
 
@@ -57,28 +55,17 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# paste your token into TELEGRAM_BOT_TOKEN in .env — never paste it in chat/commits
+# paste your token into TELEGRAM_BOT_TOKEN — never paste it in chat/commits
 ```
 
 ## 3. Run the backend
 
-For this demo flow you need `suggested_backend_main.py` running (it has
-the `/centers` endpoint the bot now calls — the old `main.py` doesn't).
-
 ```bash
 cd sih-telegram-bot
-cp suggested_backend_main.py /path/to/sih-backend/main.py   # after team agrees
-cd /path/to/sih-backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
-
-Or just run it standalone for testing without touching the real repo:
-```bash
-cd sih-telegram-bot
-pip install fastapi "uvicorn[standard]" pydantic
 uvicorn suggested_backend_main:app --reload --port 8000
 ```
+
+(Once your team signs off, this becomes the real `sih-backend/main.py`.)
 
 ## 4. Run the bot
 
@@ -92,34 +79,37 @@ python bot.py
 ## 5. Test it
 
 1. `/start` → tap **Cereals** or **Pulses**.
-2. Type a quantity, e.g. `50`.
-3. Tap **📍 Share My Location** (works on phone; desktop Telegram may not support it).
-4. You'll see 3 centres with `remaining/total qtl left`.
-5. Tap one → confirmation with token, centre, **assigned time slot**, quantity.
-6. Verify the quarter-based assignment: `curl "http://127.0.0.1:8000/centers?crop=Cereals"`
-   to see `filled_quintals` go up; book several times with quantities that
-   cross a quarter boundary (e.g. centre cap 400 → quarter 100 → a booking
-   that pushes filled past 100 should land in the 11 AM–1 PM slot, not 9–11).
-7. Try a quantity bigger than any centre's remaining space — you should see
-   "Centre is full for today" and no centres offered (or fewer than 3).
-8. `/cancel` mid-flow should reset cleanly.
+2. Tap a preset quantity button, e.g. **20 Qtl** — or tap **✏️ Other Amount**
+   and type a custom number to check that path too.
+3. Tap **📍 Share My Location** (phone only — desktop Telegram often can't).
+4. You should see 3 centres sorted nearest-first, each showing real km
+   distance and `remaining/total qtl left`.
+5. Tap one → you get a text confirmation (token, centre, assigned time
+   slot, quantity, **MSP payout estimate**, **Google Maps link**) followed
+   by a **QR code image** of the token.
+6. Tap the Maps link — it should open directions to the centre's coordinates.
+7. Scan the QR (any QR reader, e.g. your phone camera) — it should decode
+   to `AGROPROCURE:<token>`.
+8. Repeat with a location closer to a *different* demo centre (spoof via a
+   Telegram location test, or just physically test with real GPS) to
+   confirm the ordering actually changes — this is the easiest thing for a
+   judge to poke at, so check it before demo day.
+9. `/cancel` at any step should reset cleanly.
 
 ## Notes & known issues
 
 - **Slot-boundary straddling**: a booking is assigned to the slot where its
-  *starting* cumulative quantity falls. A booking that pushes past a
-  quarter boundary is still counted entirely in the earlier slot. Fine for
-  a demo; document it if asked.
-- **No real distance ranking yet** — see status table above.
-- **Race condition**: like before, `booked_today()` (read) and the booking
-  `INSERT` (write) aren't wrapped in one transaction. Two farmers booking
-  the last bit of capacity at the same instant could both succeed and
-  overfill a centre. Wrap both in a single `BEGIN IMMEDIATE` transaction
-  before demo day if you want this to be judge-proof.
-- **Daily reset** relies on the server's local date (`date.today()`) — fine
-  for a single-timezone demo, but note it if your team deploys across
-  timezones later.
-- **One booking per farmer isn't enforced** — same `farmer_id` can book
-  multiple times today. Decide if that's wanted.
+  *starting* cumulative quantity falls; a booking that crosses a quarter
+  boundary is still counted entirely in the earlier slot. Fine for a demo.
+- **Race condition**: `booked_today()` (read) and the booking `INSERT`
+  (write) aren't in one transaction — two farmers booking the last bit of
+  capacity at the same instant could both succeed. Wrap in `BEGIN
+  IMMEDIATE` before demo day if you want this judge-proof.
+- **Daily reset** relies on server local date — fine for one timezone.
+- **One booking per farmer isn't enforced** — decide if that's wanted.
+- **Demo centre coordinates are placeholders** (spread around Delhi NCR).
+  Swap in your real pitch-day centre locations in
+  `suggested_backend_main.py`'s `initial_centers` before showing distance
+  sorting live.
 - **Bot token hygiene** — keep it out of commits/screenshots; `/revoke` +
   regenerate via BotFather if it ever leaks.
