@@ -1,3 +1,10 @@
+"""
+AgroProcure Unified Backend API
+- Integrates Frontend Clerk Daily Procurement Planner (sih-mobile-frontend)
+- Integrates Farmer Quantity-based Booking & Slot Assignment (sih-telegram-bot)
+- Provides Live Aggregated Reports & Gate Verification
+"""
+
 import datetime
 import random
 import sqlite3
@@ -6,8 +13,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="AgroProcure Dynamic Engine (Unified)", version="2.0.0")
+app = FastAPI(title="AgroProcure Unified API (SQLite Engine)", version="2.0.0")
 
+# Enable CORS for Frontend & External Clients
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,6 +26,7 @@ app.add_middleware(
 
 DB_FILE = "agroprocure.db"
 
+# 4 Standard Daily Time Slots
 TIME_SLOTS = [
     "09:00 AM - 11:00 AM",
     "11:00 AM - 01:00 PM",
@@ -25,9 +34,12 @@ TIME_SLOTS = [
     "04:00 PM - 06:00 PM",
 ]
 
-DEFAULT_CENTERS = [
-    {"center_id": 1, "center_name": "Center A", "category": "General", "limit_tons": 500.0},
-    {"center_id": 2, "center_name": "Center B", "category": "General", "limit_tons": 500.0},
+DEFAULT_PROCUREMENT_CENTERS = [
+    {"center_id": 1, "center_name": "Center 1 - North Cereals Hub", "category": "Cereals", "limit_tons": 500.0},
+    {"center_id": 2, "center_name": "Center 2 - Central Grain Silo", "category": "Cereals", "limit_tons": 450.0},
+    {"center_id": 3, "center_name": "Center 3 - East Pulse Depot", "category": "Pulses", "limit_tons": 300.0},
+    {"center_id": 4, "center_name": "Center 4 - South Legume Yard", "category": "Pulses", "limit_tons": 250.0},
+    {"center_id": 5, "center_name": "Center 5 - West Gram Storage", "category": "Pulses", "limit_tons": 200.0},
 ]
 
 
@@ -42,70 +54,67 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
 
-    # 1. Fixed Time Slots Table
+    # 1. Slots table (legacy / fixed slots)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS slots (
             id INTEGER PRIMARY KEY,
             center TEXT NOT NULL,
             crop TEXT NOT NULL,
             time TEXT NOT NULL,
-            slot_order INTEGER NOT NULL
+            max_capacity INTEGER NOT NULL
         )
     """)
 
-    # 2. Persistent Center Limits Table
+    # 2. Procurement Plans table (stores daily limits set by Govt Agri Clerk)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS center_limits (
-            center_id INTEGER PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS procurement_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            center_id INTEGER NOT NULL,
             center_name TEXT NOT NULL,
-            daily_limit_tons REAL NOT NULL
+            category TEXT NOT NULL,
+            limit_tons REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, center_id)
         )
     """)
 
-    # 3. Enhanced Bookings Table
+    # 3. Enhanced Bookings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bookings (
             token TEXT PRIMARY KEY,
             farmer_name TEXT NOT NULL,
             farmer_id TEXT NOT NULL,
-            center_id INTEGER NOT NULL,
-            center_name TEXT NOT NULL,
+            center_id INTEGER,
+            center_name TEXT,
             slot_id INTEGER,
             crop TEXT NOT NULL,
-            quantity_quintals REAL NOT NULL,
-            quantity_tons REAL NOT NULL,
+            quantity_quintals REAL DEFAULT 0.0,
+            quantity_tons REAL DEFAULT 0.0,
+            time_slot TEXT NOT NULL,
             sub_queue_id TEXT NOT NULL,
-            status TEXT NOT NULL,
             booking_date TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (slot_id) REFERENCES slots (id)
+            status TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    # Populate Initial Slots
+    # Populate Initial Static Slots if empty (for backward compatibility)
     cursor.execute("SELECT COUNT(*) FROM slots")
     if cursor.fetchone()[0] == 0:
         initial_slots = [
-            (1, "Center A", "General", "09:00 AM - 11:00 AM", 1),
-            (2, "Center A", "General", "11:00 AM - 01:00 PM", 2),
-            (3, "Center A", "General", "02:00 PM - 04:00 PM", 3),
-            (4, "Center A", "General", "04:00 PM - 06:00 PM", 4),
-            (5, "Center B", "General", "09:00 AM - 11:00 AM", 1),
-            (6, "Center B", "General", "11:00 AM - 01:00 PM", 2),
-            (7, "Center B", "General", "02:00 PM - 04:00 PM", 3),
-            (8, "Center B", "General", "04:00 PM - 06:00 PM", 4),
+            (1, "Center 1 - North Cereals Hub", "Cereals", "09:00 AM - 11:00 AM", 50),
+            (2, "Center 1 - North Cereals Hub", "Cereals", "11:00 AM - 01:00 PM", 50),
+            (3, "Center 1 - North Cereals Hub", "Cereals", "02:00 PM - 04:00 PM", 50),
+            (4, "Center 1 - North Cereals Hub", "Cereals", "04:00 PM - 06:00 PM", 50),
+            (5, "Center 3 - East Pulse Depot", "Pulses", "09:00 AM - 11:00 AM", 50),
+            (6, "Center 3 - East Pulse Depot", "Pulses", "11:00 AM - 01:00 PM", 50),
+            (7, "Center 3 - East Pulse Depot", "Pulses", "02:00 PM - 04:00 PM", 50),
+            (8, "Center 3 - East Pulse Depot", "Pulses", "04:00 PM - 06:00 PM", 50),
         ]
         cursor.executemany(
-            "INSERT INTO slots (id, center, crop, time, slot_order) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO slots (id, center, crop, time, max_capacity) VALUES (?, ?, ?, ?, ?)",
             initial_slots,
-        )
-
-    # Populate Default Center Limits
-    cursor.execute("SELECT COUNT(*) FROM center_limits")
-    if cursor.fetchone()[0] == 0:
-        cursor.executemany(
-            "INSERT INTO center_limits (center_id, center_name, daily_limit_tons) VALUES (?, ?, ?)",
-            [(1, "Center A", 500.0), (2, "Center B", 500.0)],
         )
 
     conn.commit()
@@ -115,22 +124,29 @@ def init_db():
 init_db()
 
 
-# --- Pydantic Schemas ---
+# -----------------------------------------------------------------------------
+# Pydantic Request Models
+# -----------------------------------------------------------------------------
 
 class BookingRequest(BaseModel):
     farmer_name: str
     farmer_id: str
-    center_id: Optional[int] = 1
-    center: Optional[str] = None
-    crop: Optional[str] = "General"
-    quantity_tons: Optional[float] = None
-    quantity_quintals: Optional[float] = None
-    booking_date: Optional[str] = None
+    center_id: Optional[int] = None
+    quantity_tons: Optional[float] = None  # quantity in quintals from bot
+    slot_id: Optional[int] = None
+    date: Optional[str] = None  # format: YYYY-MM-DD (defaults to today)
 
 
-class UpdateLimitRequest(BaseModel):
+class CenterLimitItem(BaseModel):
     center_id: int
-    daily_limit_tons: float
+    center_name: str
+    category: str
+    limit_tons: float
+
+
+class ProcurementPlanRequest(BaseModel):
+    date: str
+    plans: list[CenterLimitItem]
 
 
 def generate_unique_token(cursor) -> str:
@@ -141,300 +157,407 @@ def generate_unique_token(cursor) -> str:
             return token
 
 
-# --- Endpoints ---
+def get_active_plan_for_date(cursor, target_date: str) -> list[dict]:
+    """Helper to get center limits for a date, fallback to latest plan or defaults."""
+    cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (target_date,))
+    rows = cursor.fetchall()
+    if rows and len(rows) > 0:
+        return [
+            {
+                "center_id": r["center_id"],
+                "center_name": r["center_name"],
+                "category": r["category"],
+                "limit_tons": float(r["limit_tons"]),
+            }
+            for r in rows
+        ]
 
-# 1. GET CENTERS (For Telegram Bot Location / Selection)
+    # Check most recent plan
+    cursor.execute("SELECT DISTINCT date FROM procurement_plans ORDER BY id DESC LIMIT 1")
+    last_date_row = cursor.fetchone()
+    if last_date_row:
+        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (last_date_row["date"],))
+        rows = cursor.fetchall()
+        return [
+            {
+                "center_id": r["center_id"],
+                "center_name": r["center_name"],
+                "category": r["category"],
+                "limit_tons": float(r["limit_tons"]),
+            }
+            for r in rows
+        ]
+
+    return DEFAULT_PROCUREMENT_CENTERS
+
+
+# -----------------------------------------------------------------------------
+# Endpoints
+# -----------------------------------------------------------------------------
+
+# 1. GET /centers (Called by Telegram Bot after Location Share)
 @app.get("/centers")
-def get_centers(crop: Optional[str] = Query(None), date_str: Optional[str] = Query(None)):
-    target_date = date_str or str(datetime.date.today())
+def get_centers(crop: Optional[str] = Query(None), date: Optional[str] = Query(None)):
+    today_str = date or datetime.date.today().isoformat()
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM center_limits")
-    centers = cursor.fetchall()
+    active_plans = get_active_plan_for_date(cursor, today_str)
 
-    result = []
-    for c in centers:
-        c_id = c["center_id"]
-        c_name = c["center_name"]
-        limit_tons = c["daily_limit_tons"]
+    centers_result = []
+    for center in active_plans:
+        # Filter by crop if provided
+        if crop and center["category"].strip().lower() != crop.strip().lower():
+            continue
 
+        center_id = center["center_id"]
+        max_tons = center["limit_tons"]
+        max_quintals = max_tons * 10.0
+
+        # Calculate filled quintals booked for this center on target date
         cursor.execute(
-            "SELECT COALESCE(SUM(quantity_tons), 0.0) FROM bookings WHERE center_id = ? AND booking_date = ?",
-            (c_id, target_date),
+            "SELECT COALESCE(SUM(quantity_quintals), 0.0) FROM bookings WHERE center_id = ? AND booking_date = ?",
+            (center_id, today_str),
         )
-        booked_tons = float(cursor.fetchone()[0])
-        remaining_tons = max(0.0, limit_tons - booked_tons)
+        filled_quintals = float(cursor.fetchone()[0])
+        remaining_quintals = max(0.0, max_quintals - filled_quintals)
 
-        result.append({
-            "id": c_id,
-            "name": c_name,
-            "daily_limit_tons": limit_tons,
-            "booked_tons": booked_tons,
-            "remaining_tons": remaining_tons,
-            "remaining_quintals": remaining_tons * 10.0,
+        centers_result.append({
+            "id": center_id,
+            "name": center["center_name"],
+            "category": center["category"],
+            "max_capacity_tons": max_tons,
+            "max_capacity_quintals": max_quintals,
+            "filled_quintals": filled_quintals,
+            "remaining_quintals": remaining_quintals,
+            "remaining_tons": remaining_quintals / 10.0,
         })
 
     conn.close()
-    return {"date": target_date, "centers": result}
+    return {"date": today_str, "centers": centers_result}
 
 
-# 2. GET SLOTS & CENTER CAPACITY
-@app.get("/slots")
-def get_slots(center_id: int = 1):
-    today_str = str(datetime.date.today())
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM center_limits WHERE center_id = ?", (center_id,))
-    center_row = cursor.fetchone()
-    daily_limit = center_row["daily_limit_tons"] if center_row else 500.0
-    center_name = center_row["center_name"] if center_row else "Center A"
-
-    cursor.execute(
-        "SELECT COALESCE(SUM(quantity_tons), 0.0) FROM bookings WHERE center_id = ? AND booking_date = ?",
-        (center_id, today_str),
-    )
-    total_booked = float(cursor.fetchone()[0])
-    remaining_center_tons = max(0.0, daily_limit - total_booked)
-
-    cursor.execute("SELECT * FROM slots WHERE center = ? ORDER BY slot_order", (center_name,))
-    slots = cursor.fetchall()
-
-    conn.close()
-    return {
-        "center_id": center_id,
-        "center_name": center_name,
-        "daily_limit_tons": daily_limit,
-        "total_booked_tons": total_booked,
-        "remaining_tons": remaining_center_tons,
-        "slots": [dict(s) for s in slots],
-    }
-
-
-# 3. CREATE BOOKING (Dynamic 4-Slot Split + Edge Case Protection)
+# 2. POST /book (Called by Telegram Bot OR Slot Frontend)
 @app.post("/book")
 def create_booking(request: BookingRequest):
-    target_date = request.booking_date or str(datetime.date.today())
+    target_date = request.date or datetime.date.today().isoformat()
     conn = get_db()
     cursor = conn.cursor()
 
-    # Calculate weight in tons
-    if request.quantity_tons is not None:
-        qty_tons = float(request.quantity_tons)
-        qty_qtl = qty_tons * 10.0
-    elif request.quantity_quintals is not None:
-        qty_qtl = float(request.quantity_quintals)
-        qty_tons = qty_qtl / 10.0
+    # Branch A: Center & Quantity Based Booking (Telegram Bot flow)
+    if request.center_id is not None:
+        active_plans = get_active_plan_for_date(cursor, target_date)
+        target_center = next((c for c in active_plans if c["center_id"] == request.center_id), None)
+
+        if not target_center:
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Center #{request.center_id} not found")
+
+        qty_quintals = float(request.quantity_tons or 0.0)
+        if qty_quintals <= 0:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Booking quantity must be greater than zero")
+
+        max_quintals = target_center["limit_tons"] * 10.0
+
+        # Check existing bookings today
+        cursor.execute(
+            "SELECT COALESCE(SUM(quantity_quintals), 0.0), COUNT(*) FROM bookings WHERE center_id = ? AND booking_date = ?",
+            (request.center_id, target_date),
+        )
+        row = cursor.fetchone()
+        filled_so_far = float(row[0])
+        booking_count_today = int(row[1])
+
+        if filled_so_far + qty_quintals > max_quintals:
+            conn.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Center capacity exceeded! Remaining space: {max(0.0, max_quintals - filled_so_far):.1f} quintals",
+            )
+
+        # Dynamic 4-quarter time slot assignment
+        quarter_size = max(1.0, max_quintals / 4.0)
+        slot_index = min(3, int(filled_so_far // quarter_size))
+        assigned_time = TIME_SLOTS[slot_index]
+
+        token = generate_unique_token(cursor)
+        sub_queue_id = f"C{target_center['center_id']}-S{slot_index + 1}-{booking_count_today + 1:02d}"
+
+        cursor.execute(
+            """
+            INSERT INTO bookings (
+                token, farmer_name, farmer_id, center_id, center_name, slot_id, crop,
+                quantity_quintals, quantity_tons, time_slot, sub_queue_id, booking_date, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                token,
+                request.farmer_name,
+                request.farmer_id,
+                target_center["center_id"],
+                target_center["center_name"],
+                None,
+                target_center["category"],
+                qty_quintals,
+                qty_quintals / 10.0,
+                assigned_time,
+                sub_queue_id,
+                target_date,
+                "BOOKED",
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "status": "SUCCESS",
+            "token": token,
+            "center": target_center["center_name"],
+            "time": assigned_time,
+            "quantity_tons": qty_quintals,
+            "sub_queue_id": sub_queue_id,
+            "message": "Center slot booked successfully!",
+        }
+
+    # Branch B: Legacy slot_id booking
+    elif request.slot_id is not None:
+        cursor.execute("SELECT * FROM slots WHERE id = ?", (request.slot_id,))
+        target_slot = cursor.fetchone()
+        if not target_slot:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Slot not found")
+
+        cursor.execute("SELECT COUNT(*) FROM bookings WHERE slot_id = ?", (request.slot_id,))
+        booked_count = cursor.fetchone()[0]
+
+        if booked_count >= target_slot["max_capacity"]:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Slot is full")
+
+        sub_queue_id = f"SLOT{target_slot['id']}-{booked_count + 1:02d}"
+        token = generate_unique_token(cursor)
+
+        cursor.execute(
+            """
+            INSERT INTO bookings (
+                token, farmer_name, farmer_id, slot_id, center_name, crop,
+                quantity_quintals, quantity_tons, time_slot, sub_queue_id, booking_date, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                token,
+                request.farmer_name,
+                request.farmer_id,
+                target_slot["id"],
+                target_slot["center"],
+                target_slot["crop"],
+                10.0,
+                1.0,
+                target_slot["time"],
+                sub_queue_id,
+                target_date,
+                "BOOKED",
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "status": "SUCCESS",
+            "token": token,
+            "sub_queue_id": sub_queue_id,
+            "center": target_slot["center"],
+            "time": target_slot["time"],
+            "quantity_tons": 10.0,
+            "message": "Slot booked successfully!",
+        }
+
     else:
         conn.close()
-        raise HTTPException(status_code=400, detail="Must provide quantity_tons or quantity_quintals")
+        raise HTTPException(status_code=400, detail="Must provide either center_id or slot_id")
 
-    # Fetch center details
-    cursor.execute("SELECT * FROM center_limits WHERE center_id = ?", (request.center_id,))
-    center_row = cursor.fetchone()
-    if not center_row:
-        conn.close()
-        raise HTTPException(status_code=404, detail=f"Center #{request.center_id} not found")
 
-    center_name = center_row["center_name"]
-    daily_limit = float(center_row["daily_limit_tons"])
-
-    # Calculate booked tons today
-    cursor.execute(
-        "SELECT COALESCE(SUM(quantity_tons), 0.0) FROM bookings WHERE center_id = ? AND booking_date = ?",
-        (request.center_id, target_date),
-    )
-    total_booked = float(cursor.fetchone()[0])
-    remaining_center_tons = daily_limit - total_booked
-
-    if remaining_center_tons <= 0:
-        conn.close()
-        raise HTTPException(
-            status_code=400,
-            detail="Daily limit for this procurement center has been completely filled. Please book for tomorrow.",
-        )
-
-    if qty_tons > remaining_center_tons:
-        excess_tons = qty_tons - remaining_center_tons
-        conn.close()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Requested quantity exceeds remaining daily limit by {excess_tons:.2f} tons. Max available today: {remaining_center_tons:.2f} tons. Please adjust or book for tomorrow.",
-        )
-
-    # Dynamic 4-slot determination
-    slot_target = daily_limit / 4.0
-    cursor.execute("SELECT * FROM slots WHERE center = ? ORDER BY slot_order", (center_name,))
+# 3. GET /slots (Legacy / Slot Visibility Component)
+@app.get("/slots")
+def get_slots():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM slots")
     slots = cursor.fetchall()
 
-    assigned_slot = slots[3] if slots else None
-    assigned_time = TIME_SLOTS[3]
-    slot_order = 4
-    slot_id = None
+    slots_response = []
+    for slot in slots:
+        cursor.execute("SELECT COUNT(*) FROM bookings WHERE slot_id = ?", (slot["id"],))
+        booked_count = cursor.fetchone()[0]
+        slots_response.append({
+            "id": slot["id"],
+            "center": slot["center"],
+            "crop": slot["crop"],
+            "time": slot["time"],
+            "max_capacity": slot["max_capacity"],
+            "remaining": max(0, slot["max_capacity"] - booked_count),
+        })
 
-    if slots:
-        for s in slots:
-            cursor.execute(
-                "SELECT COALESCE(SUM(quantity_tons), 0.0) FROM bookings WHERE slot_id = ? AND booking_date = ?",
-                (s["id"], target_date),
-            )
-            slot_booked = float(cursor.fetchone()[0])
-            if slot_booked < slot_target:
-                assigned_slot = s
-                assigned_time = s["time"]
-                slot_order = s["slot_order"]
-                slot_id = s["id"]
-                break
-
-    cursor.execute(
-        "SELECT COUNT(*) FROM bookings WHERE center_id = ? AND booking_date = ?",
-        (request.center_id, target_date),
-    )
-    booking_count = cursor.fetchone()[0] + 1
-    sub_queue_id = f"SLOT{slot_order}-{booking_count:02d}"
-
-    token = generate_unique_token(cursor)
-
-    cursor.execute(
-        """
-        INSERT INTO bookings (
-            token, farmer_name, farmer_id, center_id, center_name, slot_id, crop,
-            quantity_quintals, quantity_tons, sub_queue_id, status, booking_date
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            token,
-            request.farmer_name,
-            request.farmer_id,
-            request.center_id,
-            center_name,
-            slot_id,
-            request.crop or "General",
-            qty_qtl,
-            qty_tons,
-            sub_queue_id,
-            "BOOKED",
-            target_date,
-        ),
-    )
-
-    conn.commit()
     conn.close()
-
-    return {
-        "status": "SUCCESS",
-        "token": token,
-        "center": center_name,
-        "assigned_time": assigned_time,
-        "sub_queue_id": sub_queue_id,
-        "booked_tons": qty_tons,
-        "remaining_center_tons": remaining_center_tons - qty_tons,
-        "message": f"Successfully booked for {assigned_time}!",
-    }
+    return {"slots": slots_response}
 
 
-# 4. VERIFY TOKEN AT GATE
+# 4. POST /verify/{token} (Gate Check-in Verification)
 @app.post("/verify/{token}")
 def verify_token(token: str):
     conn = get_db()
     cursor = conn.cursor()
 
     cursor.execute("SELECT * FROM bookings WHERE token = ?", (token,))
-    target = cursor.fetchone()
+    booking = cursor.fetchone()
 
-    if not target:
+    if not booking:
         conn.close()
         raise HTTPException(status_code=404, detail="Invalid token code")
 
-    if target["status"] == "ARRIVED":
+    if booking["status"] == "ARRIVED":
         conn.close()
-        raise HTTPException(status_code=400, detail="This token has already been used to check in")
+        raise HTTPException(status_code=400, detail="This token has already been checked in")
 
     cursor.execute("UPDATE bookings SET status = 'ARRIVED' WHERE token = ?", (token,))
     conn.commit()
 
-    conn.close()
-
-    return {
+    result = {
         "status": "VERIFIED",
-        "farmer_name": target["farmer_name"],
-        "quantity_tons": target["quantity_tons"],
-        "sub_queue_id": target["sub_queue_id"],
-        "center": target["center_name"],
-        "message": "Token valid. Farmer marked as ARRIVED.",
+        "farmer_name": booking["farmer_name"],
+        "sub_queue_id": booking["sub_queue_id"],
+        "center": booking["center_name"],
+        "crop": booking["crop"],
+        "time": booking["time_slot"],
+        "quantity_quintals": booking["quantity_quintals"],
+        "quantity_tons": booking["quantity_tons"],
+        "booking_date": booking["booking_date"],
+        "message": "Token verified. Farmer marked as ARRIVED.",
     }
+    conn.close()
+    return result
 
 
-# 5. ADMIN ENDPOINT TO UPDATE DAILY LIMIT
-@app.post("/admin/set-limit")
-def set_center_limit(request: UpdateLimitRequest):
+# 5. GET /procurement-plan & POST /procurement-plan (Clerk Daily Planning)
+@app.get("/procurement-plan")
+def get_procurement_plan(date: Optional[str] = None):
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO center_limits (center_id, center_name, daily_limit_tons)
-        VALUES (?, ?, ?)
-        ON CONFLICT(center_id) DO UPDATE SET daily_limit_tons = excluded.daily_limit_tons
-        """,
-        (request.center_id, f"Center {request.center_id}", request.daily_limit_tons),
-    )
+    if date:
+        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (date,))
+        rows = cursor.fetchall()
+        if rows:
+            plans = [
+                {
+                    "center_id": r["center_id"],
+                    "center_name": r["center_name"],
+                    "category": r["category"],
+                    "limit_tons": r["limit_tons"],
+                }
+                for r in rows
+            ]
+            conn.close()
+            return {"date": date, "is_saved": True, "plans": plans}
+
+    cursor.execute("SELECT DISTINCT date FROM procurement_plans ORDER BY id DESC LIMIT 1")
+    last_date_row = cursor.fetchone()
+    if last_date_row:
+        last_date = last_date_row["date"]
+        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (last_date,))
+        rows = cursor.fetchall()
+        plans = [
+            {
+                "center_id": r["center_id"],
+                "center_name": r["center_name"],
+                "category": r["category"],
+                "limit_tons": r["limit_tons"],
+            }
+            for r in rows
+        ]
+        conn.close()
+        return {"date": date, "is_saved": False, "copied_from_date": last_date, "plans": plans}
+
+    conn.close()
+    return {"date": date, "is_saved": False, "plans": DEFAULT_PROCUREMENT_CENTERS}
+
+
+@app.post("/procurement-plan")
+def save_procurement_plan(request: ProcurementPlanRequest):
+    conn = get_db()
+    cursor = conn.cursor()
+
+    for item in request.plans:
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO procurement_plans (date, center_id, center_name, category, limit_tons)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (request.date, item.center_id, item.center_name, item.category, item.limit_tons),
+        )
 
     conn.commit()
     conn.close()
+
     return {
         "status": "SUCCESS",
-        "message": f"Daily limit for Center #{request.center_id} updated to {request.daily_limit_tons} tons.",
+        "message": f"Daily procurement plan for {request.date} submitted successfully!",
+        "date": request.date,
+        "saved_count": len(request.plans),
     }
 
 
-# 6. GET LIVE REPORT (For Clerk Dashboard UI)
+# 6. GET /live-report (Real-time Live Reporting for Frontend Clerk Tab 2)
 @app.get("/live-report")
-def get_live_report(date_str: Optional[str] = None):
-    target_date = date_str or str(datetime.date.today())
+def get_live_report(date: Optional[str] = None):
+    target_date = date or datetime.date.today().isoformat()
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM center_limits")
-    centers = cursor.fetchall()
+    active_plans = get_active_plan_for_date(cursor, target_date)
 
     total_tokens = 0
-    total_booked_tons = 0.0
-    total_capacity_tons = sum(c["daily_limit_tons"] for c in centers)
+    total_procured_tons = 0.0
+    total_capacity_tons = sum(p["limit_tons"] for p in active_plans)
 
     center_stats = []
-    for c in centers:
-        c_id = c["center_id"]
-        c_limit = c["daily_limit_tons"]
+    for center in active_plans:
+        c_id = center["center_id"]
+        c_limit_tons = center["limit_tons"]
 
         cursor.execute(
             "SELECT COUNT(*), COALESCE(SUM(quantity_tons), 0.0) FROM bookings WHERE center_id = ? AND booking_date = ?",
             (c_id, target_date),
         )
-        row = cursor.fetchone()
-        c_tokens = int(row[0])
-        c_tons = float(row[1])
+        c_tokens, c_booked_tons = cursor.fetchone()
+        c_tokens = int(c_tokens)
+        c_booked_tons = float(c_booked_tons)
 
         total_tokens += c_tokens
-        total_booked_tons += c_tons
+        total_procured_tons += c_booked_tons
+        fill_pct = round((c_booked_tons / c_limit_tons * 100.0), 1) if c_limit_tons > 0 else 0.0
 
         center_stats.append({
             "center_id": c_id,
-            "center_name": c["center_name"],
-            "limit_tons": c_limit,
-            "tokens_issued": c_tokens,
-            "filled_tons": c_tons,
-            "utilization_pct": round((c_tons / c_limit * 100.0), 1) if c_limit > 0 else 0.0,
+            "center_name": center["center_name"],
+            "category": center["category"],
+            "limit_tons": c_limit_tons,
+            "tokens_distributed": c_tokens,
+            "filled_tons": c_booked_tons,
+            "fill_percentage": fill_pct,
         })
+
+    overall_utilization = round((total_procured_tons / total_capacity_tons * 100.0), 1) if total_capacity_tons > 0 else 0.0
 
     conn.close()
     return {
         "date": target_date,
         "total_tokens_issued": total_tokens,
-        "total_booked_tons": total_booked_tons,
+        "total_procured_tons": total_procured_tons,
         "total_capacity_tons": total_capacity_tons,
-        "overall_utilization_pct": round((total_booked_tons / total_capacity_tons * 100.0), 1) if total_capacity_tons > 0 else 0.0,
+        "overall_capacity_utilization_pct": overall_utilization,
         "centers": center_stats,
-        }
-    
+    }
