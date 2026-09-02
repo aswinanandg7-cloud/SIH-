@@ -1,27 +1,45 @@
 """
-SIH PS 32 — Farmer-facing Telegram bot.
+SIH PS 32 — Farmer-facing Telegram bot (demo version).
 
-Flow: /start -> pick crop (Cereals/Pulses) -> pick a time slot -> booking
-confirmed with a 6-digit token. Farmer name/ID come straight from the
-Telegram profile, so there is no typing anywhere in the flow.
+Flow: /start -> pick crop (Cereals/Pulses) -> type quantity (quintals)
+-> tap "share location" -> bot says "Found your location!" and shows 3
+centres for that crop with quantity remaining -> farmer picks a centre
+-> backend books the quantity and auto-assigns one of the day's 4 time
+slots based on how full that centre already is -> confirmation with
+token, centre, assigned time, and quantity.
 
-Talks to the backend in sih-backend/main.py via:
-  GET  /slots
+NOTE: for the demo, "Found your location!" is cosmetic — the location the
+farmer shares isn't used to pick a centre yet (all matching centres for
+the crop are shown, farmer picks by remaining quantity). Swap in real
+distance-based sorting later if you want the location to actually drive
+which centre appears first.
+
+Talks to the backend in suggested_backend_main.py via:
+  GET  /centers?crop=...
   POST /book
 """
 
 import logging
 import os
-from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
 )
 
 load_dotenv()
@@ -37,21 +55,29 @@ logger = logging.getLogger(__name__)
 
 CROPS = ["Cereals", "Pulses"]
 
+# Conversation states
+CHOOSING_CROP, TYPING_QUANTITY, WAITING_LOCATION, CHOOSING_CENTER = range(4)
+
 
 # --------------------------------------------------------------------------
 # Backend API helpers
 # --------------------------------------------------------------------------
 
-async def fetch_slots() -> list:
+async def fetch_centers(crop: str) -> list:
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(f"{API_BASE_URL}/slots")
+        resp = await client.get(f"{API_BASE_URL}/centers", params={"crop": crop})
         resp.raise_for_status()
-        return resp.json()["slots"]
+        return resp.json()["centers"]
 
 
-async def book_slot(farmer_name: str, farmer_id: str, slot_id: int):
+async def book_center(farmer_name: str, farmer_id: str, center_id: int, quantity_tons: float):
     """Returns (result_dict, error_message). Exactly one will be None."""
-    payload = {"farmer_name": farmer_name, "farmer_id": farmer_id, "slot_id": slot_id}
+    payload = {
+        "farmer_name": farmer_name,
+        "farmer_id": farmer_id,
+        "center_id": center_id,
+        "quantity_tons": quantity_tons,
+    }
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(f"{API_BASE_URL}/book", json=payload)
 
@@ -66,107 +92,126 @@ async def book_slot(farmer_name: str, farmer_id: str, slot_id: int):
 
 
 # --------------------------------------------------------------------------
-# Handlers
+# Conversation steps
 # --------------------------------------------------------------------------
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
     keyboard = [[InlineKeyboardButton(crop, callback_data=f"crop:{crop}")] for crop in CROPS]
     await update.message.reply_text(
         "👋 Welcome to AgroProcure!\n\nPlease choose your crop category:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+    return CHOOSING_CROP
 
 
-async def show_slots_for_crop(update: Update, crop: str) -> None:
+async def crop_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
+    await query.answer()
+    crop = query.data.split(":", 1)[1]
+    context.user_data["crop"] = crop
+
+    await query.edit_message_text(f"🌾 Crop: {crop}")
+    await query.get_bot().send_message(
+        chat_id=update.effective_chat.id,
+        text="How many quintals are you bringing? (e.g. 5)",
+    )
+    return TYPING_QUANTITY
+
+
+async def quantity_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    try:
+        quantity = float(text)
+        if quantity <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("Please send a positive number, e.g. 5 or 2.5")
+        return TYPING_QUANTITY
+
+    context.user_data["quantity"] = quantity
+
+    location_button = KeyboardButton("📍 Share My Location", request_location=True)
+    await update.message.reply_text(
+        f"Got it — {quantity} quintals.\n\nTap below to share your location:",
+        reply_markup=ReplyKeyboardMarkup([[location_button]], one_time_keyboard=True, resize_keyboard=True),
+    )
+    return WAITING_LOCATION
+
+
+async def location_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    crop = context.user_data.get("crop")
+    quantity = context.user_data.get("quantity")
+
+    await update.message.reply_text("📍 Found your location!", reply_markup=ReplyKeyboardRemove())
 
     try:
-        slots = await fetch_slots()
+        centers = await fetch_centers(crop)
     except httpx.HTTPError:
-        await query.edit_message_text(
-            "⚠️ Couldn't reach the booking server. Please try again in a moment.\n"
-            "(Send /start to retry.)"
+        await update.message.reply_text("⚠️ Couldn't reach the booking server. Send /start to retry.")
+        return ConversationHandler.END
+
+    # Only show centres that can actually take this quantity today
+    open_centers = [c for c in centers if c["remaining_quintals"] >= quantity]
+
+    if not open_centers:
+        await update.message.reply_text(
+            f"😕 No centre for {crop} has {quantity} quintals of space left today. Try a smaller "
+            "quantity or check back tomorrow. (/start to retry)"
         )
-        return
+        return ConversationHandler.END
 
-    matching = [s for s in slots if s["crop"] == crop and s["remaining"] > 0]
-
-    if not matching:
-        await query.edit_message_text(
-            f"😕 No open slots left for {crop} right now. Please check back later.\n"
-            "(Send /start to try again.)"
-        )
-        return
-
+    # Show up to 3 centres
+    shown = open_centers[:3]
     keyboard = [
         [
             InlineKeyboardButton(
-                f"{s['center']} — {s['time']} ({s['remaining']} left)",
-                callback_data=f"slot:{s['id']}",
+                f"{c['name']} — {c['remaining_quintals']:.0f}/{c['max_capacity_quintals']:.0f} qtl left",
+                callback_data=f"center:{c['id']}",
             )
         ]
-        for s in matching
+        for c in shown
     ]
-    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back:crop")])
 
-    await query.edit_message_text(
-        f"🌾 {crop} — pick a time slot:",
+    await update.message.reply_text(
+        "Here are nearby centres with space:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+    return CHOOSING_CENTER
 
 
-async def handle_booking(update: Update, slot_id: int) -> None:
+async def center_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
+    await query.answer()
+    center_id = int(query.data.split(":", 1)[1])
+
     user = update.effective_user
-
     farmer_name = user.full_name or user.username or "Farmer"
-    farmer_id = str(user.id)  # stable, typo-proof identifier
+    farmer_id = str(user.id)
+    quantity = context.user_data.get("quantity", 0)
 
-    result, error = await book_slot(farmer_name, farmer_id, slot_id)
-
-    if error == "Slot is full":
-        await query.edit_message_text(
-            "⚠️ Sorry, that slot just filled up. Let's pick another one.\n\n"
-            "Send /start to choose again."
-        )
-        return
+    result, error = await book_center(farmer_name, farmer_id, center_id, quantity)
 
     if error:
         await query.edit_message_text(f"⚠️ Booking failed: {error}\n\nSend /start to try again.")
-        return
+        return ConversationHandler.END
 
     await query.edit_message_text(
         "✅ Booking confirmed!\n\n"
         f"🎫 Token: {result['token']}\n"
         f"📍 Centre: {result['center']}\n"
-        f"🕒 Time: {result['time']}\n\n"
+        f"🕒 Assigned time slot: {result['time']}\n"
+        f"⚖️ Quantity: {result['quantity_tons']} quintals\n\n"
         "Show this token at the centre gate on arrival. Keep it safe!"
     )
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data.startswith("crop:"):
-        crop = data.split(":", 1)[1]
-        await show_slots_for_crop(update, crop)
-
-    elif data.startswith("slot:"):
-        slot_id = int(data.split(":", 1)[1])
-        await handle_booking(update, slot_id)
-
-    elif data == "back:crop":
-        keyboard = [[InlineKeyboardButton(crop, callback_data=f"crop:{crop}")] for crop in CROPS]
-        await query.edit_message_text(
-            "Please choose your crop category:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-
-
-async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Send /start to book a slot.")
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
+    await update.message.reply_text("Cancelled. Send /start to begin again.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
 
 
 # --------------------------------------------------------------------------
@@ -180,8 +225,18 @@ def main() -> None:
         )
 
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
+
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSING_CROP: [CallbackQueryHandler(crop_chosen, pattern="^crop:")],
+            TYPING_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_received)],
+            WAITING_LOCATION: [MessageHandler(filters.LOCATION, location_received)],
+            CHOOSING_CENTER: [CallbackQueryHandler(center_chosen, pattern="^center:")],
+        },
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
+    )
+    app.add_handler(conv)
 
     logger.info("Bot starting, polling for updates against %s ...", API_BASE_URL)
     app.run_polling()
