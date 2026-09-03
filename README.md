@@ -33,7 +33,7 @@ Follow these steps sequentially to set up and run the entire application stack o
 
 ### Step 1: Clone the Repository
 ```bash
-git clone (https://github.com/aswinanandg7-cloud/SIH-.git)
+git clone https://github.com/aswinanandg7-cloud/SIH-.git
 cd SIH-
 ```
 
