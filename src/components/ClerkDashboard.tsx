@@ -233,9 +233,9 @@ export const ClerkDashboard: React.FC = () => {
       <aside className={`side-nav-panel ${sidebarOpen ? 'mobile-open' : ''}`}>
         <div className="side-nav-header">
           <div className="brand-badge">
-            <span className="brand-icon">🌾</span>
+            <span className="brand-icon"></span>
             <div className="brand-text">
-              <span className="brand-title">AgroProcure</span>
+              <span className="brand-title">MandiMitra</span>
               <span className="brand-sub">Clerk Portal</span>
             </div>
           </div>
@@ -244,7 +244,7 @@ export const ClerkDashboard: React.FC = () => {
             className="mobile-close-btn"
             onClick={() => setSidebarOpen(false)}
           >
-            ✕
+            
           </button>
         </div>
 
@@ -269,7 +269,7 @@ export const ClerkDashboard: React.FC = () => {
               setSidebarOpen(false);
             }}
           >
-            <span className="nav-icon">📋</span>
+            <span className="nav-icon"></span>
             <div className="nav-label-container">
               <span className="nav-title">The Procurement Planner</span>
               <span className="nav-subtitle">Daily limit allocation</span>
@@ -284,7 +284,7 @@ export const ClerkDashboard: React.FC = () => {
               setSidebarOpen(false);
             }}
           >
-            <span className="nav-icon">📊</span>
+            <span className="nav-icon"></span>
             <div className="nav-label-container">
               <span className="nav-title">The Live Report</span>
               <span className="nav-subtitle">Token & capacity metrics</span>
@@ -299,7 +299,7 @@ export const ClerkDashboard: React.FC = () => {
               setSidebarOpen(false);
             }}
           >
-            <span className="nav-icon">🚚</span>
+            <span className="nav-icon"></span>
             <div className="nav-label-container">
               <span className="nav-title">Token Status</span>
               <span className="nav-subtitle">Gate & delivery updates</span>
@@ -310,7 +310,7 @@ export const ClerkDashboard: React.FC = () => {
 
         <div className="side-nav-footer">
           <button type="button" className="sidebar-logout-btn" onClick={logout}>
-            <span>🚪</span> Sign Out
+            <span></span> Sign Out
           </button>
         </div>
       </aside>
@@ -326,7 +326,7 @@ export const ClerkDashboard: React.FC = () => {
               onClick={() => setSidebarOpen(!sidebarOpen)}
               title="Toggle Menu"
             >
-              ☰
+              
             </button>
             <div className="current-page-title">
               {activeTab === 'planner' ? 'The Procurement Planner' : activeTab === 'live' ? 'The Live Report' : 'Token Status'}
@@ -365,7 +365,7 @@ export const ClerkDashboard: React.FC = () => {
               {/* Date Selection Box */}
               <div className="date-picker-box">
                 <label htmlFor="procurement-date-input" className="date-picker-label">
-                  📅 Target Planning Date:
+                   Target Planning Date:
                 </label>
                 <div className="date-picker-controls">
                   <button
@@ -379,7 +379,7 @@ export const ClerkDashboard: React.FC = () => {
                   <div className="date-input-wrapper" style={{ position: 'relative', display: 'inline-block' }}>
                     <div className="date-input" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', minWidth: '140px', cursor: 'pointer' }}>
                       <span>{formatDateToDDMMYYYY(selectedDate)}</span>
-                      <span style={{ fontSize: '1.1rem' }}>📅</span>
+                      <span style={{ fontSize: '1.1rem' }}></span>
                     </div>
                     <input
                       id="procurement-date-input"
@@ -419,14 +419,14 @@ export const ClerkDashboard: React.FC = () => {
             {/* Persistence Sync Banner */}
             <div className="status-sync-bar">
               {loading ? (
-                <span className="sync-status loading">⌛ Fetching plan from backend...</span>
+                <span className="sync-status loading"> Fetching plan from backend...</span>
               ) : isSavedInDb ? (
                 <span className="sync-status saved">
-                  ✅ Saved Plan: Showing limits stored in backend for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong>.
+                   Saved Plan: Showing limits stored in backend for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong>.
                 </span>
               ) : copiedFromDate ? (
                 <span className="sync-status copied">
-                  💡 Auto-Prepopulated: Showing limits remembered from previous plan (<strong>{copiedFromDate ? formatDateToDDMMYYYY(copiedFromDate) : ''}</strong>). Submit to save for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong>.
+                   Auto-Prepopulated: Showing limits remembered from previous plan (<strong>{copiedFromDate ? formatDateToDDMMYYYY(copiedFromDate) : ''}</strong>). Submit to save for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong>.
                 </span>
               ) : (
                 <span className="sync-status initial">
@@ -438,7 +438,7 @@ export const ClerkDashboard: React.FC = () => {
             {feedback && (
               <div className={`feedback-alert feedback-${feedback.type}`}>
                 <span className="alert-icon">
-                  {feedback.type === 'success' ? '🎉' : feedback.type === 'error' ? '⚠️' : 'ℹ️'}
+                  {feedback.type === 'success' ? '' : feedback.type === 'error' ? '️' : 'ℹ️'}
                 </span>
                 <span className="alert-text">{feedback.message}</span>
               </div>
@@ -448,7 +448,7 @@ export const ClerkDashboard: React.FC = () => {
             <div className="kpi-cards-grid">
               <div className="kpi-card cereals-card">
                 <div className="kpi-header">
-                  <span className="kpi-icon">🌾</span>
+                  <span className="kpi-icon"></span>
                   <span className="kpi-label">Cereals Target</span>
                 </div>
                 <div className="kpi-value">{cerealsTotal.toLocaleString()} MT</div>
@@ -457,7 +457,7 @@ export const ClerkDashboard: React.FC = () => {
 
               <div className="kpi-card pulses-card">
                 <div className="kpi-header">
-                  <span className="kpi-icon">🫘</span>
+                  <span className="kpi-icon"></span>
                   <span className="kpi-label">Pulses Target</span>
                 </div>
                 <div className="kpi-value">{pulsesTotal.toLocaleString()} MT</div>
@@ -466,7 +466,7 @@ export const ClerkDashboard: React.FC = () => {
 
               <div className="kpi-card total-card">
                 <div className="kpi-header">
-                  <span className="kpi-icon">🎯</span>
+                  <span className="kpi-icon"></span>
                   <span className="kpi-label">Total Day Limit</span>
                 </div>
                 <div className="kpi-value">{totalLimitTons.toLocaleString()} MT</div>
@@ -507,7 +507,7 @@ export const ClerkDashboard: React.FC = () => {
                             </td>
                             <td>
                               <span className={`category-pill ${isCereals ? 'pill-cereals' : 'pill-pulses'}`}>
-                                {isCereals ? '🌾 Cereals' : '🫘 Pulses'}
+                                {isCereals ? ' Cereals' : ' Pulses'}
                               </span>
                             </td>
                             <td className="limit-input-cell">
@@ -557,7 +557,7 @@ export const ClerkDashboard: React.FC = () => {
                     className="submit-plan-btn"
                     disabled={submitting}
                   >
-                    {submitting ? '⏳ Submitting Plan...' : `🚀 Submit Day Plan for ${formatDateToDDMMYYYY(selectedDate)}`}
+                    {submitting ? ' Submitting Plan...' : ` Submit Day Plan for ${formatDateToDDMMYYYY(selectedDate)}`}
                   </button>
                 </div>
               </div>
@@ -610,7 +610,7 @@ export const ClerkDashboard: React.FC = () => {
             {/* ── Error banner ── */}
             {liveError && (
               <div className="feedback-alert feedback-error">
-                <span className="alert-icon">⚠️</span>
+                <span className="alert-icon">️</span>
                 <span className="alert-text">Could not fetch live data: {liveError}</span>
               </div>
             )}
@@ -619,7 +619,7 @@ export const ClerkDashboard: React.FC = () => {
             <div className="kpi-cards-grid">
               <div className="kpi-card live-tokens-card">
                 <div className="kpi-header">
-                  <span className="kpi-icon">🎟️</span>
+                  <span className="kpi-icon">️</span>
                   <span className="kpi-label">Tokens Issued Today</span>
                 </div>
                 <div className="kpi-value">
@@ -630,7 +630,7 @@ export const ClerkDashboard: React.FC = () => {
 
               <div className="kpi-card live-procured-card">
                 <div className="kpi-header">
-                  <span className="kpi-icon">⚖️</span>
+                  <span className="kpi-icon">️</span>
                   <span className="kpi-label">Estimated Quantity</span>
                 </div>
                 <div className="kpi-value">
@@ -646,7 +646,7 @@ export const ClerkDashboard: React.FC = () => {
 
               <div className="kpi-card live-fill-card">
                 <div className="kpi-header">
-                  <span className="kpi-icon">📈</span>
+                  <span className="kpi-icon"></span>
                   <span className="kpi-label">Total Limit Filled</span>
                 </div>
                 <div className="kpi-value">
@@ -688,7 +688,7 @@ export const ClerkDashboard: React.FC = () => {
               {/* Empty state — no data yet */}
               {!liveLoading && liveData && liveData.totals.total_tokens === 0 && (
                 <div className="live-empty-state">
-                  <span className="empty-icon">📭</span>
+                  <span className="empty-icon"></span>
                   <p className="empty-title">No Bookings Yet</p>
                   <p className="empty-sub">
                     No farmer tokens have been issued yet for today.<br/>
@@ -725,7 +725,7 @@ export const ClerkDashboard: React.FC = () => {
                             <h3 className="center-title">{center.center_name}</h3>
                           </div>
                           <span className={`category-pill ${isCereals ? 'pill-cereals' : 'pill-pulses'}`}>
-                            {isCereals ? '🌾 Cereals' : '🫘 Pulses'}
+                            {isCereals ? ' Cereals' : ' Pulses'}
                           </span>
                         </div>
 
@@ -733,7 +733,7 @@ export const ClerkDashboard: React.FC = () => {
                           <div className="metric-box">
                             <span className="metric-lbl">Tokens Distributed</span>
                             <span className="metric-num metric-tokens">
-                              🎟️ {center.tokens_distributed.toLocaleString()}
+                              ️ {center.tokens_distributed.toLocaleString()}
                             </span>
                             <span className="metric-unit">farmers booked</span>
                           </div>

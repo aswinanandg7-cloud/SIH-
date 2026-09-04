@@ -1,5 +1,5 @@
 """
-AgroProcure Unified Backend API
+MandiMitra Unified Backend API
 - Integrates Frontend Clerk Daily Procurement Planner (sih-mobile-frontend)
 - Integrates Farmer Quantity-based Booking & Slot Assignment (sih-telegram-bot)
 - Provides Live Aggregated Reports & Gate Verification
@@ -20,12 +20,12 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-logger = logging.getLogger("agroprocure")
+logger = logging.getLogger("mandimitra")
 
 load_dotenv()
 
 app = FastAPI(
-    title="AgroProcure Unified API (Supabase API Engine)",
+    title="MandiMitra Unified API (Supabase API Engine)",
     version="2.0.0",
 )
 

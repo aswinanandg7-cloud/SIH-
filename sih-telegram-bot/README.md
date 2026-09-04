@@ -1,6 +1,6 @@
 # SIH Telegram Bot — Bilingual Quantity-Based Booking Flow
 
-Farmer-facing Telegram bot for the AgroProcure slot-booking system. The
+Farmer-facing Telegram bot for the MandiMitra slot-booking system. The
 farmer picks a crop, picks a quantity (preset buttons or custom), shares
 their GPS location, sees the centres with space, picks one, and gets a
 confirmed booking — with a QR-code pass, an estimated MSP payout, and a

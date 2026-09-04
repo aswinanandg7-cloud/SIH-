@@ -9,7 +9,7 @@ export const AccessDenied: React.FC = () => {
     <div className="access-denied-wrapper">
       <div className="denied-card">
         <div className="denied-icon-container">
-          <span className="denied-icon">🚫</span>
+          <span className="denied-icon"></span>
         </div>
 
         <h1 className="denied-title">Access Restricted</h1>
@@ -38,7 +38,7 @@ export const AccessDenied: React.FC = () => {
         </div>
 
         <button type="button" className="switch-user-btn" onClick={logout}>
-          🔄 Logout & Login with Official Credentials
+           Logout & Login with Official Credentials
         </button>
       </div>
     </div>

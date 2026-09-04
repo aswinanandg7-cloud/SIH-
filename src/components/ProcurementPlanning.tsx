@@ -119,7 +119,7 @@ export const ProcurementPlanning: React.FC = () => {
     <div className="procurement-wrapper">
       <header className="procurement-header">
         <div className="header-brand">
-          <div className="portal-icon">🌾</div>
+          <div className="portal-icon"></div>
           <div>
             <h1 className="header-title">Procurement Planning Portal</h1>
             <span className="gov-badge">Role Verified: govt-agri-officer</span>
@@ -143,7 +143,7 @@ export const ProcurementPlanning: React.FC = () => {
             <span className="user-role-pill">Govt Agri Officer</span>
           </div>
           <button type="button" className="logout-btn" onClick={logout} title="Sign Out">
-            🚪 Logout
+             Logout
           </button>
         </div>
       </header>
@@ -152,7 +152,7 @@ export const ProcurementPlanning: React.FC = () => {
         {/* KPI Stat Cards */}
         <div className="stats-grid">
           <div className="stat-card">
-            <div className="stat-icon target">🎯</div>
+            <div className="stat-icon target"></div>
             <div className="stat-content">
               <span className="stat-label">Total Target</span>
               <span className="stat-value">{totalTargetTons.toLocaleString()} MT</span>
@@ -160,7 +160,7 @@ export const ProcurementPlanning: React.FC = () => {
           </div>
 
           <div className="stat-card">
-            <div className="stat-icon procured">🚜</div>
+            <div className="stat-icon procured"></div>
             <div className="stat-content">
               <span className="stat-label">Procured to Date</span>
               <span className="stat-value">{totalProcuredTons.toLocaleString()} MT</span>
@@ -168,7 +168,7 @@ export const ProcurementPlanning: React.FC = () => {
           </div>
 
           <div className="stat-card">
-            <div className="stat-icon budget">💰</div>
+            <div className="stat-icon budget"></div>
             <div className="stat-content">
               <span className="stat-label">Budget Allocation</span>
               <span className="stat-value">₹{totalBudgetLakhs.toLocaleString()} L</span>
@@ -176,7 +176,7 @@ export const ProcurementPlanning: React.FC = () => {
           </div>
 
           <div className="stat-card">
-            <div className="stat-icon active">📍</div>
+            <div className="stat-icon active"></div>
             <div className="stat-content">
               <span className="stat-label">Active Centers</span>
               <span className="stat-value">{plans.length} Districts</span>
@@ -187,7 +187,7 @@ export const ProcurementPlanning: React.FC = () => {
         {/* Toolbar & Controls */}
         <div className="toolbar">
           <div className="search-box">
-            <span className="search-icon">🔍</span>
+            <span className="search-icon"></span>
             <input
               type="text"
               placeholder="Search district or plan ID..."
@@ -207,7 +207,7 @@ export const ProcurementPlanning: React.FC = () => {
           </div>
 
           <button type="button" className="add-plan-btn" onClick={() => setShowAddModal(true)}>
-            ➕ Create Plan
+             Create Plan
           </button>
         </div>
 

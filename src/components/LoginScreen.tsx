@@ -27,16 +27,16 @@ const LoginScreen: React.FC = () => {
         
         <div className="brand-header">
           <div className="emblem-container">
-             <div className="ashoka-icon" style={{fontSize: "1.2rem"}}>🌾</div>
+             <div className="ashoka-icon" style={{fontSize: "1.2rem"}}></div>
           </div>
           <span className="gov-tag">GOVERNMENT OF INDIA</span>
-          <h1 className="app-title">AgroProcure Unified</h1>
+          <h1 className="app-title">MandiMitra Unified</h1>
           <p className="app-subtitle">Official Procurement Management Portal</p>
         </div>
 
         {authError && (
           <div className="auth-error-banner">
-            <span className="error-icon">⚠️</span>
+            <span className="error-icon">️</span>
             <span className="error-text">{authError}</span>
             <button className="close-error" onClick={clearError}>&times;</button>
           </div>
@@ -46,7 +46,7 @@ const LoginScreen: React.FC = () => {
           <div className="form-group">
             <label htmlFor="username">Email or Employee ID</label>
             <div className="input-input-wrapper">
-              <span className="input-icon">👤</span>
+              <span className="input-icon"></span>
               <input
                 type="text"
                 id="username"
@@ -62,7 +62,7 @@ const LoginScreen: React.FC = () => {
           <div className="form-group">
             <label htmlFor="password">Password</label>
             <div className="input-input-wrapper">
-              <span className="input-icon">🔒</span>
+              <span className="input-icon"></span>
               <input
                 type={showPassword ? "text" : "password"}
                 id="password"
@@ -78,7 +78,7 @@ const LoginScreen: React.FC = () => {
                 onClick={() => setShowPassword(!showPassword)}
                 tabIndex={-1}
               >
-                {showPassword ? "👁️" : "👁️‍🗨️"}
+                {showPassword ? "Hide" : "Show"}
               </button>
             </div>
           </div>
@@ -106,7 +106,7 @@ const LoginScreen: React.FC = () => {
               onClick={() => demoLogin('govt-agri-officer')}
               disabled={isLoading}
             >
-              🧑‍💼 Login as District Agri Officer
+              ‍ Login as District Agri Officer
             </button>
             <button 
               type="button" 
@@ -114,7 +114,7 @@ const LoginScreen: React.FC = () => {
               onClick={() => demoLogin('govt-agri-clerk')}
               disabled={isLoading}
             >
-              🧑‍💻 Login as Verification Clerk
+              ‍ Login as Verification Clerk
             </button>
             <button 
               type="button" 
@@ -122,7 +122,7 @@ const LoginScreen: React.FC = () => {
               onClick={() => demoLogin('general-user')}
               disabled={isLoading}
             >
-              🚜 Login as Farmer (Test Mode)
+               Login as Farmer (Test Mode)
             </button>
           </div>
         </div>

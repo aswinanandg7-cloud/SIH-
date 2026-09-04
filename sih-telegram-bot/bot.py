@@ -48,6 +48,8 @@ import logging
 import math
 import os
 import re
+import json
+import asyncio
 from io import BytesIO
 
 import httpx
@@ -102,7 +104,7 @@ TRANSLATIONS = {
     "en": {
         "choose_language": "🌐 Please choose your language:",
         "name_prompt": (
-            "🌾 Welcome to AgroProcure Slot Booking System!\n\n"
+            "🌾 Welcome to MandiMitra Slot Booking System!\n\n"
             "Please enter your *Full Name*:"
         ),
         "name_invalid": "Please type a valid name (letters only, at least 2 characters).",
@@ -151,15 +153,19 @@ TRANSLATIONS = {
         "qr_caption": "🎫 Token {token} — show this QR code at gate check-in.",
         "help_text": (
             "/start — begin a new booking\n"
+            "/status <token> — check booking status\n"
             "/cancel — cancel the current booking flow\n"
             "/help — show this message"
         ),
         "cancelled": "Cancelled. Send /start to begin again.",
+        "status_missing_token": "Please provide your token number. For example: /status 123456",
+        "status_not_found": "Booking not found for token: {token}",
+        "status_display": "📌 *Booking Status*\n\n🎫 Token: *{token}*\n👤 Name: *{name}*\n🏢 Centre: *{center}*\n⚖️ Quantity: *{qty} quintals*\n📌 Status: *{status}*",
     },
     "hi": {
         "choose_language": "🌐 कृपया अपनी भाषा चुनें:",
         "name_prompt": (
-            "🌾 एग्रोप्रोक्योर स्लॉट बुकिंग प्रणाली में आपका स्वागत है!\n\n"
+            "🌾 मंडीमित्र स्लॉट बुकिंग प्रणाली में आपका स्वागत है!\n\n"
             "कृपया अपना *पूरा नाम* दर्ज करें:"
         ),
         "name_invalid": "कृपया एक मान्य नाम दर्ज करें (केवल अक्षर, कम से कम 2 अक्षर)।",
@@ -208,10 +214,14 @@ TRANSLATIONS = {
         "qr_caption": "🎫 टोकन {token} — गेट चेक-इन पर यह क्यूआर कोड दिखाएं।",
         "help_text": (
             "/start — नई बुकिंग शुरू करें\n"
+            "/status <token> — बुकिंग की स्थिति जांचें\n"
             "/cancel — वर्तमान बुकिंग रद्द करें\n"
             "/help — यह संदेश दिखाएं"
         ),
         "cancelled": "रद्द किया गया। फिर से शुरू करने के लिए /start भेजें।",
+        "status_missing_token": "कृपया अपना टोकन नंबर प्रदान करें। उदाहरण के लिए: /status 123456",
+        "status_not_found": "टोकन {token} के लिए बुकिंग नहीं मिली।",
+        "status_display": "📌 *बुकिंग स्थिति*\n\n🎫 टोकन: *{token}*\n👤 नाम: *{name}*\n🏢 केंद्र: *{center}*\n⚖️ मात्रा: *{qty} क्विंटल*\n📌 स्थिति: *{status}*",
     },
 }
 
@@ -262,6 +272,19 @@ async def book_center(farmer_name: str, farmer_id: str, center_id: int, quantity
         return None, f"Network error: {e}"
 
 
+async def fetch_booking(token: str):
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{API_BASE_URL}/booking/{token}")
+        if resp.status_code == 200:
+            return resp.json(), None
+        if resp.status_code == 404:
+            return None, "Not Found"
+        return None, "Error"
+    except httpx.RequestError as e:
+        return None, f"Network error: {e}"
+
+
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -272,13 +295,64 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def make_qr_image(token: str) -> BytesIO:
-    qr = qrcode.make(f"AGROPROCURE:{token}")
+    qr = qrcode.make(f"MANDIMITRA:{token}")
     bio = BytesIO()
     bio.name = "token.png"
     qr.save(bio, "PNG")
     bio.seek(0)
     return bio
 
+
+# --------------------------------------------------------------------------
+# Background Polling
+# --------------------------------------------------------------------------
+
+WATCH_FILE = "watches.json"
+
+def load_watches():
+    if os.path.exists(WATCH_FILE):
+        with open(WATCH_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_watches(watches):
+    with open(WATCH_FILE, "w") as f:
+        json.dump(watches, f)
+
+def add_watch(token, chat_id, status):
+    watches = load_watches()
+    watches[token] = {"chat_id": chat_id, "status": status}
+    save_watches(watches)
+
+async def background_polling(app: Application):
+    while True:
+        await asyncio.sleep(15)
+        try:
+            watches = load_watches()
+            changed = False
+            for token, data in list(watches.items()):
+                result, error = await fetch_booking(token)
+                if not error and result:
+                    new_status = result.get("status")
+                    if new_status and new_status != data["status"]:
+                        chat_id = data["chat_id"]
+                        msg = f"🔔 *Update!* Your booking ({token}) step has been processed.\n📌 New Status: *{new_status}*"
+                        try:
+                            await app.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+                        except Exception as e:
+                            logger.error(f"Failed to send update to %s: %s", chat_id, e)
+                        
+                        watches[token]["status"] = new_status
+                        changed = True
+                        if new_status in ["PAID", "COLLECTED"]:
+                            del watches[token]
+            if changed:
+                save_watches(watches)
+        except Exception as e:
+            logger.error("Background polling error: %s", e)
+
+async def post_init(app: Application):
+    asyncio.create_task(background_polling(app))
 
 # --------------------------------------------------------------------------
 # Conversation steps
@@ -516,8 +590,36 @@ async def center_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         caption=t("qr_caption", context, token=result["token"]),
     )
 
+    add_watch(result["token"], update.effective_chat.id, "BOOKED")
+
     context.user_data.clear()
     return ConversationHandler.END
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args
+    if not args:
+        await update.message.reply_text(t("status_missing_token", context))
+        return
+    
+    token = args[0]
+    result, error = await fetch_booking(token)
+    
+    if error == "Not Found":
+        await update.message.reply_text(t("status_not_found", context, token=escape_md(token)))
+    elif error:
+        await update.message.reply_text(t("server_error", context))
+    else:
+        status_text = t(
+            "status_display",
+            context,
+            token=escape_md(result["token"]),
+            name=escape_md(result["farmer_name"]),
+            center=escape_md(result["center_name"]),
+            qty=result["quantity_quintals"],
+            status=escape_md(result["status"])
+        )
+        await update.message.reply_text(status_text, parse_mode=ParseMode.MARKDOWN)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -539,7 +641,7 @@ def build_app():
     if not BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN is not set.")
         return None
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -557,6 +659,7 @@ def build_app():
         per_message=False,
     )
     app.add_handler(conv)
+    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("help", help_command))
 
     return app

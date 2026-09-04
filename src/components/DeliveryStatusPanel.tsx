@@ -1,6 +1,7 @@
 /* eslint-disable */
 import React, { useState, useEffect } from 'react';
 import './DeliveryStatusPanel.css';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 
 const formatDateToDDMMYYYY = (isoDate: string) => {
@@ -20,6 +21,7 @@ export const DeliveryStatusPanel: React.FC = () => {
   const [error, setError] = useState('');
   const [isAutoRefresh, setIsAutoRefresh] = useState(true);
   const [updateLoading, setUpdateLoading] = useState(false);
+  const [scannerActive, setScannerActive] = useState(false);
 
   const fetchBooking = async (searchToken: string) => {
     if (!searchToken) return;
@@ -56,6 +58,36 @@ export const DeliveryStatusPanel: React.FC = () => {
     return () => clearInterval(interval);
   }, [isAutoRefresh, booking, token]);
 
+  useEffect(() => {
+    if (scannerActive) {
+      const scanner = new Html5QrcodeScanner(
+        "qr-reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        false
+      );
+
+      scanner.render((decodedText) => {
+        // Extract token
+        let extractedToken = decodedText;
+        if (decodedText.includes(':')) {
+            extractedToken = decodedText.split(':')[1];
+        }
+        setToken(extractedToken);
+        setScannerActive(false);
+        scanner.clear();
+        fetchBooking(extractedToken);
+      }, () => {
+        // Handle scan error optionally
+      });
+
+      return () => {
+        scanner.clear().catch(error => {
+          console.error("Failed to clear html5QrcodeScanner. ", error);
+        });
+      };
+    }
+  }, [scannerActive]);
+
   const updateStatus = async (newStatus: string) => {
     if (!booking) return;
     setUpdateLoading(true);
@@ -89,21 +121,30 @@ export const DeliveryStatusPanel: React.FC = () => {
       </div>
 
       <div className="search-section card">
-        <form onSubmit={handleSearch} className="search-form">
-          <input
-            type="text"
-            placeholder="Enter Token Number..."
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            className="token-input"
-          />
-          <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? 'Searching...' : 'Search'}
-          </button>
-          <button type="button" className="btn-secondary" onClick={() => alert('QR Scanner Placeholder')}>
-            📷 Scan QR
-          </button>
-        </form>
+        {scannerActive ? (
+          <div className="scanner-container">
+            <div id="qr-reader" style={{ width: '100%', maxWidth: '500px', margin: '0 auto' }}></div>
+            <button type="button" className="btn-secondary mt-4" onClick={() => setScannerActive(false)}>
+              Cancel Scanning
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSearch} className="search-form">
+            <input
+              type="text"
+              placeholder="Enter Token Number..."
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              className="token-input"
+            />
+            <button type="submit" className="btn-primary" disabled={loading}>
+              {loading ? 'Searching...' : 'Search'}
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => setScannerActive(true)}>
+              Scan QR
+            </button>
+          </form>
+        )}
         {error && <p className="error-text">{error}</p>}
       </div>
 

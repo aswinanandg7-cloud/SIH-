@@ -1,13 +1,12 @@
 # Project Instructions & Feature Reference (`instructions.md`)
 
-This document serves as the comprehensive context, architectural guide, and coding guidelines for the **AgroProcure** platform (SIH Agricultural Procurement & Token Management System).
+This document serves as the comprehensive context, architectural guide, and coding guidelines for the **MandiMitra** platform (SIH Agricultural Procurement & Token Management System).
 
----
+It is specifically written to empower automated agents (like AI coding assistants) to understand the full scope of the project and make confident, correct changes.
 
-## 1. Project Context & Tech Stack
+## 1. Project Overview
 
-### Project Overview
-**AgroProcure** is a mobile-responsive agricultural procurement management web application designed for government officers, clerks, and farmers. It streamlines center-wise procurement target planning, token distribution, slot booking, and live capacity tracking.
+**MandiMitra** is a mobile-responsive agricultural procurement management web application designed for government officers, clerks, and farmers. It streamlines center-wise procurement target planning, token distribution, slot booking, and live capacity tracking.
 
 ### Tech Stack
 - **Frontend (`sih-mobile-frontend`)**:

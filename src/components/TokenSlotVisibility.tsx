@@ -45,7 +45,7 @@ export const TokenSlotVisibility: React.FC = () => {
     <div className="clerk-wrapper">
       <header className="clerk-header">
         <div className="header-brand">
-          <div className="portal-icon">🎟️</div>
+          <div className="portal-icon">️</div>
           <div>
             <h1 className="header-title">Token Slot Visibility</h1>
             <span className="clerk-badge">Role Verified: govt-agri-clerk</span>
@@ -58,7 +58,7 @@ export const TokenSlotVisibility: React.FC = () => {
             <span className="user-role-pill">Govt Agri Clerk</span>
           </div>
           <button type="button" className="logout-btn" onClick={logout} title="Sign Out">
-            🚪 Logout
+             Logout
           </button>
         </div>
       </header>
@@ -78,13 +78,13 @@ export const TokenSlotVisibility: React.FC = () => {
             onClick={fetchSlots}
             disabled={isLoading}
           >
-            {isLoading ? '⌛ Refreshing...' : '🔄 Refresh Slots'}
+            {isLoading ? ' Refreshing...' : ' Refresh Slots'}
           </button>
         </div>
 
         {error && (
           <div className="api-error-banner">
-            <div className="error-icon">⚡</div>
+            <div className="error-icon"></div>
             <div className="error-body">
               <strong>Backend Connection Note</strong>
               <p>{error}</p>
@@ -134,8 +134,8 @@ export const TokenSlotVisibility: React.FC = () => {
 
                   <div className="slot-body">
                     <h3 className="center-name">{slot.center}</h3>
-                    <div className="crop-tag">🌾 {slot.crop}</div>
-                    <div className="time-range">⏰ {slot.time}</div>
+                    <div className="crop-tag"> {slot.crop}</div>
+                    <div className="time-range"> {slot.time}</div>
                   </div>
 
                   <div className="slot-capacity-bar">
