@@ -11,6 +11,9 @@ import random
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
+
+from fastapi import Request
+import asyncio
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -519,3 +522,38 @@ def get_live_report(date: Optional[str] = None):
         "overall_capacity_utilization_pct": overall_utilization,
         "centers": center_stats,
     }
+
+
+
+
+# Telegram Webhook Integration
+import sys
+import os
+import importlib
+
+# Add telegram bot directory to path to allow importing despite hyphens
+bot_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'sih-telegram-bot')
+if bot_dir not in sys.path:
+    sys.path.append(bot_dir)
+
+try:
+    bot_module = importlib.import_module("bot")
+    bot_app = bot_module.build_app()
+    from telegram import Update
+except Exception as e:
+    print(f"Failed to load bot module: {e}")
+    bot_app = None
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    if not bot_app:
+        raise HTTPException(status_code=500, detail="Telegram bot not configured")
+    
+    if not bot_app._initialized:
+        await bot_app.initialize()
+    
+    data = await request.json()
+    update = Update.de_json(data, bot_app.bot)
+    
+    await bot_app.process_update(update)
+    return {"ok": True}

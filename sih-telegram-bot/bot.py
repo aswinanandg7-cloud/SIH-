@@ -258,8 +258,8 @@ async def book_center(farmer_name: str, farmer_id: str, center_id: int, quantity
         except Exception:
             detail = "Something went wrong."
         return None, detail
-    except httpx.RequestError:
-        return None, "Unable to reach the server. Please check connection."
+    except httpx.RequestError as e:
+        return None, f"Network error: {e}"
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -535,12 +535,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # Entrypoint
 # --------------------------------------------------------------------------
 
-def main() -> None:
+def build_app():
     if not BOT_TOKEN:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is not set. Copy .env.example to .env and add your token."
-        )
-
+        logger.warning("TELEGRAM_BOT_TOKEN is not set.")
+        return None
     app = Application.builder().token(BOT_TOKEN).build()
 
     conv = ConversationHandler(
@@ -561,9 +559,15 @@ def main() -> None:
     app.add_handler(conv)
     app.add_handler(CommandHandler("help", help_command))
 
-    logger.info("Bot starting, polling for updates against %s ...", API_BASE_URL)
-    app.run_polling()
+    return app
 
+
+
+def main() -> None:
+    app = build_app()
+    if app:
+        logger.info("Bot starting, polling for updates against %s ...", API_BASE_URL)
+        app.run_polling()
 
 if __name__ == "__main__":
     main()
