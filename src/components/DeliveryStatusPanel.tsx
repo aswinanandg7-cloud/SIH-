@@ -145,16 +145,19 @@ export const DeliveryStatusPanel: React.FC = () => {
           <div className="action-buttons mt-6">
             <h3>Update Status</h3>
             <div className="button-group">
-              {statuses.map((status, index) => (
-                <button
-                  key={status}
-                  className={`btn-action ${booking.status === status ? 'active' : ''}`}
-                  onClick={() => updateStatus(status)}
-                  disabled={updateLoading || index < currentStatusIndex || index > currentStatusIndex + 1}
-                >
-                  Mark as {status}
-                </button>
-              ))}
+              {statuses.filter(s => s !== 'BOOKED').map((status) => {
+                const originalIndex = statuses.indexOf(status);
+                return (
+                  <button
+                    key={status}
+                    className={`btn-action ${booking.status === status ? 'active' : ''}`}
+                    onClick={() => updateStatus(status)}
+                    disabled={updateLoading || originalIndex < currentStatusIndex || originalIndex > currentStatusIndex + 1}
+                  >
+                    Mark as {status}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
