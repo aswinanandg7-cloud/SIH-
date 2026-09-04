@@ -1,0 +1,7 @@
+{
+  "name": "sih-agriprocure-root",
+  "private": true,
+  "scripts": {
+    "build": "cd sih-mobile-frontend && npm install && npm run build"
+  }
+}
