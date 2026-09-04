@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
@@ -23,6 +24,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  const handleSession = (session: Session) => {
+    setToken(session.access_token);
+    
+    // Extract roles from user metadata
+    const rawRoles = session.user.user_metadata?.roles || session.user.app_metadata?.roles || [];
+    const roles = Array.isArray(rawRoles) ? rawRoles : [rawRoles];
+    
+    setUser({
+      username: session.user.email?.split('@')[0] || 'user',
+      name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+      email: session.user.email || '',
+      roles: roles,
+    });
+  };
+
   // Initialize session from Supabase
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -44,21 +60,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => subscription.unsubscribe();
   }, []);
-
-  const handleSession = (session: Session) => {
-    setToken(session.access_token);
-    
-    // Extract roles from user metadata
-    const rawRoles = session.user.user_metadata?.roles || session.user.app_metadata?.roles || [];
-    const roles = Array.isArray(rawRoles) ? rawRoles : [rawRoles];
-    
-    setUser({
-      username: session.user.email?.split('@')[0] || 'user',
-      name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
-      email: session.user.email || '',
-      roles: roles,
-    });
-  };
 
   const login = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
@@ -91,10 +92,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthError(null);
 
     setTimeout(() => {
-      let demoRoles: string[] = [];
-      let demoUsername = '';
-      let demoName = '';
-      let demoEmail = '';
+      let demoRoles: string[];
+      let demoUsername: string;
+      let demoName: string;
+      let demoEmail: string;
 
       if (role === 'govt-agri-officer') {
         demoRoles = ['govt-agri-officer', 'default-roles-realm', 'offline_access'];
