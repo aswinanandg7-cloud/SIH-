@@ -83,7 +83,7 @@ export const DeliveryStatusPanel: React.FC = () => {
         <div>
           <h1 className="page-main-title">Delivery Status & Verification</h1>
           <p className="page-description">
-            Search tokens via number or QR to check and update delivery status (Arrival, Weighing, Grading, Collection, Payment).
+            Search tokens via number or QR.
           </p>
         </div>
       </div>
