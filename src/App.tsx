@@ -1,6 +1,6 @@
 import React from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { LoginScreen } from './components/LoginScreen';
+import LoginScreen from './components/LoginScreen';
 import { ProcurementPlanning } from './components/ProcurementPlanning';
 import { ClerkDashboard } from './components/ClerkDashboard';
 import { AccessDenied } from './components/AccessDenied';
