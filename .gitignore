@@ -59,4 +59,4 @@ coverage/
 *.pyc
 __pycache__
 *.db
-*.png
+screenshot-*.png
