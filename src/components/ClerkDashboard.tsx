@@ -376,13 +376,27 @@ export const ClerkDashboard: React.FC = () => {
                   >
                     ◀
                   </button>
-                  <input
-                    id="procurement-date-input"
-                    type="date"
-                    className="date-input"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                  />
+                  <div className="date-input-wrapper" style={{ position: 'relative', display: 'inline-block' }}>
+                    <div className="date-input" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', minWidth: '140px', cursor: 'pointer' }}>
+                      <span>{formatDateToDDMMYYYY(selectedDate)}</span>
+                      <span style={{ fontSize: '1.1rem' }}>📅</span>
+                    </div>
+                    <input
+                      id="procurement-date-input"
+                      type="date"
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        opacity: 0,
+                        cursor: 'pointer'
+                      }}
+                    />
+                  </div>
                   <button
                     type="button"
                     className="date-nav-btn"
