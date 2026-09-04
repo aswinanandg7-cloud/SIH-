@@ -1,8 +1,31 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import type { DailyCenterPlan } from '../types/auth';
 import { DeliveryStatusPanel } from './DeliveryStatusPanel';
 import './ClerkDashboard.css';
+
+// ─── Live Report data types ───────────────────────────────────────────────────
+interface LiveCenterData {
+  center_id: number;
+  center_name: string;
+  category: string;
+  tokens_distributed: number;
+  quantity_filled_tons: number;
+  limit_tons: number;
+  fill_percent: number;
+}
+
+interface LiveReportData {
+  date: string;
+  tons_per_token_estimate: number;
+  centers: LiveCenterData[];
+  totals: {
+    total_tokens: number;
+    total_filled_tons: number;
+    total_limit_tons: number;
+    total_fill_percent: number;
+  };
+}
 
 const DEFAULT_CENTERS: DailyCenterPlan[] = [
   { center_id: 1, center_name: 'Center 1 - North Cereals Hub', category: 'Cereals', limit_tons: 500 },
@@ -40,6 +63,14 @@ export const ClerkDashboard: React.FC = () => {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
+  // Live Report state
+  const [liveData, setLiveData] = useState<LiveReportData | null>(null);
+  const [liveLoading, setLiveLoading] = useState<boolean>(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const liveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Fetch saved plan from backend for selected date
   const fetchPlanForDate = useCallback(async (dateToFetch: string) => {
     setLoading(true);
@@ -72,6 +103,41 @@ export const ClerkDashboard: React.FC = () => {
   useEffect(() => {
     fetchPlanForDate(selectedDate);
   }, [selectedDate, fetchPlanForDate]);
+
+  // ── Live Report data fetch ──────────────────────────────────────────────────
+  const fetchLiveReport = useCallback(async (isManual = false) => {
+    if (isManual) setIsRefreshing(true);
+    else if (!liveData) setLiveLoading(true);
+    setLiveError(null);
+    try {
+      const res = await fetch('/api/live-report');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: LiveReportData = await res.json();
+      setLiveData(data);
+      setLastUpdated(new Date());
+    } catch (err: any) {
+      setLiveError(err.message || 'Network error — is the backend running?');
+    } finally {
+      setLiveLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [liveData]);
+
+  // Start polling when Live tab is active; stop when leaving
+  useEffect(() => {
+    if (activeTab === 'live') {
+      fetchLiveReport();
+      liveIntervalRef.current = setInterval(() => fetchLiveReport(), 30_000);
+    } else {
+      if (liveIntervalRef.current) {
+        clearInterval(liveIntervalRef.current);
+        liveIntervalRef.current = null;
+      }
+    }
+    return () => {
+      if (liveIntervalRef.current) clearInterval(liveIntervalRef.current);
+    };
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle editing limit tons for a single center
   const handleLimitChange = (centerId: number, value: number) => {
@@ -476,37 +542,80 @@ export const ClerkDashboard: React.FC = () => {
         {/* Page 2: The Live Report */}
         {activeTab === 'live' && (
           <main className="page-container live-page">
+            {/* ── Page Header ── */}
             <div className="page-header-section">
               <div>
                 <h1 className="page-main-title">The Live Report</h1>
                 <p className="page-description">
-                  Real-time reporting of tokens distributed to farmers and center limit percentage filled (in tons).
+                  Real-time tokens distributed &amp; crop quantity arriving at each procurement centre.
+                  {liveData && (
+                    <span className="estimate-note">
+                      &nbsp;(Qty estimated at {liveData.tons_per_token_estimate} MT/token)
+                    </span>
+                  )}
                 </p>
               </div>
-              <div className="live-indicator">
-                <span className="pulse-dot"></span>
-                <span>Live Feed Active</span>
+              <div className="live-header-right">
+                <div className="live-indicator">
+                  <span className="pulse-dot"></span>
+                  <span>Live — Auto refreshes every 30s</span>
+                </div>
+                <button
+                  id="live-refresh-btn"
+                  type="button"
+                  className={`refresh-btn ${isRefreshing ? 'spinning' : ''}`}
+                  onClick={() => fetchLiveReport(true)}
+                  disabled={isRefreshing}
+                  title="Refresh now"
+                >
+                  ↻
+                </button>
               </div>
             </div>
 
-            {/* Overview Key Metrics */}
+            {/* ── Last Updated ── */}
+            {lastUpdated && (
+              <div className="last-updated-bar">
+                <span className="last-updated-dot">●</span>
+                Last updated: {lastUpdated.toLocaleTimeString()}
+              </div>
+            )}
+
+            {/* ── Error banner ── */}
+            {liveError && (
+              <div className="feedback-alert feedback-error">
+                <span className="alert-icon">⚠️</span>
+                <span className="alert-text">Could not fetch live data: {liveError}</span>
+              </div>
+            )}
+
+            {/* ── Overview KPI Cards ── */}
             <div className="kpi-cards-grid">
               <div className="kpi-card live-tokens-card">
                 <div className="kpi-header">
                   <span className="kpi-icon">🎟️</span>
                   <span className="kpi-label">Tokens Issued Today</span>
                 </div>
-                <div className="kpi-value">1,420 Tokens</div>
+                <div className="kpi-value">
+                  {liveLoading ? <span className="kpi-skeleton"/> : `${liveData?.totals.total_tokens ?? 0} Tokens`}
+                </div>
                 <div className="kpi-sub">Across 5 Active Centers</div>
               </div>
 
               <div className="kpi-card live-procured-card">
                 <div className="kpi-header">
                   <span className="kpi-icon">⚖️</span>
-                  <span className="kpi-label">Procured Volume</span>
+                  <span className="kpi-label">Estimated Quantity</span>
                 </div>
-                <div className="kpi-value">1,155 Tons</div>
-                <div className="kpi-sub">Out of 1,700 Tons Limit</div>
+                <div className="kpi-value">
+                  {liveLoading
+                    ? <span className="kpi-skeleton"/>
+                    : `${liveData?.totals.total_filled_tons.toFixed(1) ?? 0} MT`
+                  }
+                </div>
+                <div className="kpi-sub">
+                  Out of {liveData?.totals.total_limit_tons.toLocaleString() ?? '—'} MT Limit
+                </div>
               </div>
 
               <div className="kpi-card live-fill-card">
@@ -514,79 +623,137 @@ export const ClerkDashboard: React.FC = () => {
                   <span className="kpi-icon">📈</span>
                   <span className="kpi-label">Total Limit Filled</span>
                 </div>
-                <div className="kpi-value">67.9%</div>
+                <div className="kpi-value">
+                  {liveLoading
+                    ? <span className="kpi-skeleton"/>
+                    : `${liveData?.totals.total_fill_percent ?? 0}%`
+                  }
+                </div>
                 <div className="kpi-sub">Capacity Utilization</div>
               </div>
             </div>
 
-            {/* Dummy Live Reports Grid */}
+            {/* ── Center-wise Cards Grid ── */}
             <div className="live-reports-container">
               <div className="section-header">
-                <h2>Center-wise Live Token & Procurement Status</h2>
-                <span className="badge-live-tag">Updated 1 min ago</span>
+                <h2>Centre-wise Live Token &amp; Procurement Status</h2>
+                <span className="badge-live-tag">
+                  {liveData ? `Data for ${liveData.date}` : 'Fetching...'}
+                </span>
               </div>
 
-              <div className="center-live-cards-grid">
-                {plans.map((center, index) => {
-                  // Dummy metrics calculation for demo visualization
-                  const fillPercentages = [72, 64, 70, 66, 65];
-                  const fillPct = fillPercentages[index % fillPercentages.length];
-                  const filledTons = Math.round((center.limit_tons * fillPct) / 100);
-                  const tokenCounts = [420, 380, 260, 210, 150];
-                  const tokensDistributed = tokenCounts[index % tokenCounts.length];
-                  const isCereals = center.category.toLowerCase() === 'cereals';
-
-                  return (
-                    <div key={center.center_id} className="live-center-card">
-                      <div className="card-top-bar">
-                        <div className="center-identity">
-                          <span className="center-code">#0{center.center_id}</span>
-                          <h3 className="center-title">{center.center_name}</h3>
-                        </div>
-                        <span className={`category-pill ${isCereals ? 'pill-cereals' : 'pill-pulses'}`}>
-                          {isCereals ? '🌾 Cereals' : '🫘 Pulses'}
-                        </span>
+              {/* Loading skeletons */}
+              {liveLoading && !liveData && (
+                <div className="center-live-cards-grid">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <div key={n} className="live-center-card skeleton-card">
+                      <div className="sk-line sk-title"/>
+                      <div className="sk-line sk-sub"/>
+                      <div className="sk-metrics">
+                        <div className="sk-box"/>
+                        <div className="sk-box"/>
                       </div>
+                      <div className="sk-line sk-bar"/>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-                      <div className="metrics-split">
-                        <div className="metric-box">
-                          <span className="metric-lbl">Tokens Distributed</span>
-                          <span className="metric-num">{tokensDistributed} Farmers</span>
+              {/* Empty state — no data yet */}
+              {!liveLoading && liveData && liveData.totals.total_tokens === 0 && (
+                <div className="live-empty-state">
+                  <span className="empty-icon">📭</span>
+                  <p className="empty-title">No Bookings Yet</p>
+                  <p className="empty-sub">
+                    No farmer tokens have been issued yet for today.<br/>
+                    Once farmers book via the Telegram bot, live data will appear here.
+                  </p>
+                </div>
+              )}
+
+              {/* Real center cards */}
+              {liveData && liveData.totals.total_tokens > 0 && (
+                <div className="center-live-cards-grid">
+                  {liveData.centers.map((center) => {
+                    const isCereals = center.category.toLowerCase() === 'cereals';
+                    const fillPct = center.fill_percent;
+                    const fillColor =
+                      fillPct >= 90 ? '#ef4444'
+                      : fillPct >= 70 ? '#10b981'
+                      : '#3b82f6';
+                    const statusLabel =
+                      fillPct >= 90 ? 'Near capacity'
+                      : fillPct >= 50 ? 'Operating normally'
+                      : 'Accepting arrivals';
+
+                    return (
+                      <div
+                        key={center.center_id}
+                        className={`live-center-card ${fillPct >= 90 ? 'card-near-full' : ''}`}
+                      >
+                        <div className="card-top-bar">
+                          <div className="center-identity">
+                            <span className="center-code">
+                              #{String(center.center_id).padStart(2, '0')}
+                            </span>
+                            <h3 className="center-title">{center.center_name}</h3>
+                          </div>
+                          <span className={`category-pill ${isCereals ? 'pill-cereals' : 'pill-pulses'}`}>
+                            {isCereals ? '🌾 Cereals' : '🫘 Pulses'}
+                          </span>
                         </div>
-                        <div className="metric-box">
-                          <span className="metric-lbl">Quantity Filled</span>
-                          <span className="metric-num">
-                            {filledTons} / {center.limit_tons} MT
+
+                        <div className="metrics-split">
+                          <div className="metric-box">
+                            <span className="metric-lbl">Tokens Distributed</span>
+                            <span className="metric-num metric-tokens">
+                              🎟️ {center.tokens_distributed.toLocaleString()}
+                            </span>
+                            <span className="metric-unit">farmers booked</span>
+                          </div>
+                          <div className="metric-box">
+                            <span className="metric-lbl">Quantity Filled</span>
+                            <span className="metric-num">
+                              {center.quantity_filled_tons.toFixed(1)}
+                              <span className="metric-of"> / {center.limit_tons} MT</span>
+                            </span>
+                            <span className="metric-unit">estimated arrival</span>
+                          </div>
+                        </div>
+
+                        {/* Limit Capacity Slider */}
+                        <div className="live-progress-bar-wrapper">
+                          <div className="progress-label-row">
+                            <span>Limit Capacity</span>
+                            <strong style={{ color: fillColor }}>
+                              {fillPct}%
+                            </strong>
+                          </div>
+                          <div className="bar-bg">
+                            <div
+                              className="bar-fill"
+                              style={{ width: `${Math.min(fillPct, 100)}%`, backgroundColor: fillColor }}
+                            />
+                          </div>
+                          <div className="bar-limits-row">
+                            <span>0 MT</span>
+                            <span>{center.limit_tons} MT</span>
+                          </div>
+                        </div>
+
+                        <div className="live-card-footer">
+                          <span
+                            className="status-dot-green"
+                            style={{ color: fillPct >= 90 ? '#f87171' : '#4ade80' }}
+                          >
+                            ● {statusLabel}
                           </span>
                         </div>
                       </div>
-
-                      <div className="live-progress-bar-wrapper">
-                        <div className="progress-label-row">
-                          <span>Limit Capacity Filled</span>
-                          <strong style={{ color: fillPct > 70 ? '#10b981' : '#f59e0b' }}>
-                            {fillPct}%
-                          </strong>
-                        </div>
-                        <div className="bar-bg">
-                          <div
-                            className="bar-fill"
-                            style={{
-                              width: `${fillPct}%`,
-                              backgroundColor: fillPct > 70 ? '#10b981' : '#3b82f6',
-                            }}
-                          ></div>
-                        </div>
-                      </div>
-
-                      <div className="live-card-footer">
-                        <span className="status-dot-green">● Operating normally</span>
-                        <span className="queue-wait">Avg wait: 12 mins</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </main>
         )}

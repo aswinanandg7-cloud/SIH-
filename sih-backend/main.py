@@ -557,3 +557,121 @@ async def telegram_webhook(request: Request):
     
     await bot_app.process_update(update)
     return {"ok": True}
+# 6. GET LIVE REPORT (Real-time token counts + capacity fill per center)
+TONS_PER_TOKEN = 0.5  # Estimated average crop load per farmer (Option A: no bot changes needed)
+
+
+@app.get("/live-report")
+def get_live_report(date: str = None):
+    """
+    Aggregates live booking token counts from the bookings table (populated by the
+    Telegram bot via POST /book) and merges with the procurement plan limits for
+    the given date.
+
+    Quantity filled is estimated as: tokens_distributed × TONS_PER_TOKEN
+    since the bot does not yet capture actual crop weight per farmer.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    target_date = date or __import__("datetime").date.today().isoformat()
+
+    # ── Step 1: Fetch today's procurement plan limits ──────────────────────────
+    cursor.execute(
+        "SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id",
+        (target_date,),
+    )
+    plan_rows = cursor.fetchall()
+
+    # Fallback: use most recent saved plan if today has none
+    if not plan_rows:
+        cursor.execute(
+            "SELECT DISTINCT date FROM procurement_plans ORDER BY id DESC LIMIT 1"
+        )
+        last_date_row = cursor.fetchone()
+        if last_date_row:
+            cursor.execute(
+                "SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id",
+                (last_date_row["date"],),
+            )
+            plan_rows = cursor.fetchall()
+
+    # If still nothing, use defaults
+    if not plan_rows:
+        plans_map = {
+            p["center_name"]: p for p in DEFAULT_PROCUREMENT_CENTERS
+        }
+        plan_list = list(DEFAULT_PROCUREMENT_CENTERS)
+    else:
+        plan_list = [dict(r) for r in plan_rows]
+        plans_map = {p["center_name"]: p for p in plan_list}
+
+    # ── Step 2: Count tokens per slot center from bookings table ──────────────
+    # The Telegram bot books into slots which reference slots.center ("Center A", "Center B").
+    # We aggregate token counts per slot center name.
+    cursor.execute(
+        """
+        SELECT s.center AS slot_center, s.crop, COUNT(b.token) AS token_count
+        FROM slots s
+        LEFT JOIN bookings b ON b.slot_id = s.id
+        GROUP BY s.center, s.crop
+        """
+    )
+    slot_rows = cursor.fetchall()
+    conn.close()
+
+    # Build a lookup: slot_center (e.g. "Center A") → token_count
+    slot_token_map: dict = {}
+    for row in slot_rows:
+        key = row["slot_center"]
+        slot_token_map[key] = slot_token_map.get(key, 0) + row["token_count"]
+
+    # ── Step 3: Build per-center response ─────────────────────────────────────
+    # Map procurement plan centers to slot centers by position order
+    # (Center A → first plan centers, Center B → next, etc.)
+    # This is a best-effort heuristic since slot names differ from plan names.
+    slot_center_keys = sorted(slot_token_map.keys())  # e.g. ["Center A", "Center B"]
+
+    centers_response = []
+    total_tokens = 0
+    total_filled_tons = 0.0
+    total_limit_tons = 0.0
+
+    for idx, plan in enumerate(plan_list):
+        # Try to find a matching slot center for this procurement center
+        # Match by index position (Center A → centers 0..N, Center B → next group, etc.)
+        # Since slot data may not perfectly cover all 5 plan centers, default to 0
+        matched_slot_center = slot_center_keys[idx] if idx < len(slot_center_keys) else None
+        tokens = slot_token_map.get(matched_slot_center, 0) if matched_slot_center else 0
+
+        qty_filled = round(tokens * TONS_PER_TOKEN, 2)
+        limit = plan["limit_tons"]
+        fill_pct = round((qty_filled / limit * 100), 1) if limit > 0 else 0.0
+
+        centers_response.append({
+            "center_id": plan["center_id"],
+            "center_name": plan["center_name"],
+            "category": plan["category"],
+            "tokens_distributed": tokens,
+            "quantity_filled_tons": qty_filled,
+            "limit_tons": limit,
+            "fill_percent": fill_pct,
+        })
+
+        total_tokens += tokens
+        total_filled_tons += qty_filled
+        total_limit_tons += limit
+
+    overall_fill_pct = round((total_filled_tons / total_limit_tons * 100), 1) if total_limit_tons > 0 else 0.0
+
+    return {
+        "date": target_date,
+        "tons_per_token_estimate": TONS_PER_TOKEN,
+        "centers": centers_response,
+        "totals": {
+            "total_tokens": total_tokens,
+            "total_filled_tons": total_filled_tons,
+            "total_limit_tons": total_limit_tons,
+            "total_fill_percent": overall_fill_pct,
+        },
+    }
