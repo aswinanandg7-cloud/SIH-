@@ -202,7 +202,18 @@ export const ClerkDashboard: React.FC = () => {
   const totalLimitTons = plans.reduce((acc, p) => acc + p.limit_tons, 0);
 
   // Quick date change handlers
+
+  const formatDateToDDMMYYYY = (isoDate: string) => {
+    if (!isoDate) return '';
+    const parts = isoDate.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return isoDate;
+  };
+
   const handleQuickDate = (offsetDays: number) => {
+
     const d = new Date(selectedDate || todayStr);
     d.setDate(d.getDate() + offsetDays);
     setSelectedDate(d.toISOString().split('T')[0]);
@@ -397,15 +408,15 @@ export const ClerkDashboard: React.FC = () => {
                 <span className="sync-status loading">⌛ Fetching plan from backend...</span>
               ) : isSavedInDb ? (
                 <span className="sync-status saved">
-                  ✅ Saved Plan: Showing limits stored in backend for <strong>{selectedDate}</strong>.
+                  ✅ Saved Plan: Showing limits stored in backend for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong>.
                 </span>
               ) : copiedFromDate ? (
                 <span className="sync-status copied">
-                  💡 Auto-Prepopulated: Showing limits remembered from previous plan (<strong>{copiedFromDate}</strong>). Submit to save for <strong>{selectedDate}</strong>.
+                  💡 Auto-Prepopulated: Showing limits remembered from previous plan (<strong>{copiedFromDate ? formatDateToDDMMYYYY(copiedFromDate) : ''}</strong>). Submit to save for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong>.
                 </span>
               ) : (
                 <span className="sync-status initial">
-                  ℹ️ Example Plan: Showing initial example limits. Edit and submit to save for <strong>{selectedDate}</strong>.
+                  ℹ️ Example Plan: Showing initial example limits. Edit and submit to save for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong>.
                 </span>
               )}
             </div>
@@ -525,14 +536,14 @@ export const ClerkDashboard: React.FC = () => {
 
                 <div className="form-submit-footer">
                   <div className="submit-info-text">
-                    * Submitting saves these limits in the database for <strong>{selectedDate}</strong> and carries them forward to future planning dates.
+                    * Submitting saves these limits in the database for <strong>{formatDateToDDMMYYYY(selectedDate)}</strong> and carries them forward to future planning dates.
                   </div>
                   <button
                     type="submit"
                     className="submit-plan-btn"
                     disabled={submitting}
                   >
-                    {submitting ? '⏳ Submitting Plan...' : `🚀 Submit Day Plan for ${selectedDate}`}
+                    {submitting ? '⏳ Submitting Plan...' : `🚀 Submit Day Plan for ${formatDateToDDMMYYYY(selectedDate)}`}
                   </button>
                 </div>
               </div>

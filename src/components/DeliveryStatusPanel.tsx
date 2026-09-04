@@ -2,7 +2,18 @@
 import React, { useState, useEffect } from 'react';
 import './DeliveryStatusPanel.css';
 
+
+const formatDateToDDMMYYYY = (isoDate: string) => {
+  if (!isoDate) return '';
+  const parts = isoDate.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return isoDate;
+};
+
 export const DeliveryStatusPanel: React.FC = () => {
+
   const [token, setToken] = useState('');
   const [booking, setBooking] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -116,7 +127,7 @@ export const DeliveryStatusPanel: React.FC = () => {
             <div><strong>Center:</strong> {booking.center_name}</div>
             <div><strong>Quantity:</strong> {booking.quantity_tons} Tons</div>
             <div><strong>Time Slot:</strong> {booking.time_slot}</div>
-            <div><strong>Date:</strong> {booking.booking_date}</div>
+            <div><strong>Date:</strong> {formatDateToDDMMYYYY(booking.booking_date)}</div>
           </div>
 
           <div className="status-timeline mt-6">
