@@ -393,8 +393,13 @@ async def quantity_custom_received(update: Update, context: ContextTypes.DEFAULT
 
 async def ask_for_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = update.effective_chat.id
+    # Plain text button (like the preset-quantity buttons), NOT the special
+    # request-location "+" button. On Desktop/Web Telegram the request_location
+    # button often sends its label as text with no location object, which made
+    # the previous flow re-prompt forever. The backend doesn't actually use the
+    # coordinates (centres are sorted by capacity), so a simple tap is enough.
     keyboard = [
-        [KeyboardButton(t("share_location_btn", context), request_location=True)],
+        [KeyboardButton(t("share_location_btn", context))],
     ]
     await context.bot.send_message(
         chat_id=chat_id,
@@ -444,10 +449,11 @@ async def _show_centers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 async def location_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.message.location:
-        # Anything other than a shared location at this step: re-prompt
-        return await ask_for_location(update, context)
-
+    # Accept any tap/message at this step (a real Location object, or the plain
+    # text of the "Share GPS Location" button). The backend ignores coordinates,
+    # so we don't gate on update.message.location — gating on it caused an
+    # infinite re-prompt loop on Desktop/Web clients.
+    logger.info("Location step received: type=%s", update.message.location or "text")
     await update.message.reply_text(t("found_location", context), reply_markup=ReplyKeyboardRemove())
     return await _show_centers(update, context)
 
