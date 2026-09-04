@@ -1,15 +1,39 @@
+
 :root {
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color-scheme: dark;
-  background-color: #0f172a;
-  color: #f8fafc;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* Default Dark Theme */
+  --bg-app: #0f172a;
+  --bg-panel: #1e293b;
+  --bg-card: #0f172a;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+  --input-bg: #0f172a;
+  --btn-bg: #334155;
+  --btn-hover: #475569;
+  --btn-text: #f8fafc;
+  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  
+  --color-primary: #3b82f6;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
 }
+
+[data-theme="light"] {
+  --bg-app: #f1f5f9;
+  --bg-panel: #ffffff;
+  --bg-card: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --border-color: #cbd5e1;
+  --input-bg: #f8fafc;
+  --btn-bg: #e2e8f0;
+  --btn-hover: #cbd5e1;
+  --btn-text: #1e293b;
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+
 
 * {
   box-sizing: border-box;
@@ -20,7 +44,7 @@ body {
   padding: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #0f172a;
+  background-color: var(--bg-app);
 }
 
 #root {
@@ -28,4 +52,24 @@ body {
   min-height: 100vh;
   margin: 0;
   padding: 0;
+}
+
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0.35rem;
+  border-radius: 50%;
+  width: 35px;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.theme-toggle-btn:hover {
+  background: var(--btn-hover);
 }

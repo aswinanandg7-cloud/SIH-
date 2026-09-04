@@ -5,7 +5,7 @@
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: radial-gradient(circle at 50% 30%, #1e1b4b 0%, #0f172a 80%);
+  background: var(--bg-app);
   box-sizing: border-box;
 }
 
@@ -19,7 +19,7 @@
   border-radius: 20px;
   padding: 2.25rem 2rem;
   text-align: center;
-  color: #f8fafc;
+  color: var(--text-primary);
   animation: fadeIn 0.3s ease-out;
 }
 
@@ -48,7 +48,7 @@
 
 .denied-subtitle {
   font-size: 0.875rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
   line-height: 1.5;
   margin: 0 0 1.5rem;
 }
@@ -65,7 +65,7 @@
 
 .role-label {
   font-size: 0.8rem;
-  color: #cbd5e1;
+  color: var(--text-secondary);
 }
 
 .role-badge {
@@ -88,7 +88,7 @@
 
 .user-roles-title {
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   display: block;
@@ -109,7 +109,7 @@
 
 .no-roles-text {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-secondary);
   font-style: italic;
 }
 
@@ -119,7 +119,7 @@
   background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
   border: none;
   border-radius: 12px;
-  color: #ffffff;
+  color: var(--text-primary);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;

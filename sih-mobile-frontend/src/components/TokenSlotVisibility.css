@@ -1,6 +1,6 @@
 .clerk-wrapper {
   min-height: 100vh;
-  background: #0f172a;
+  background: var(--bg-app);
   color: #f8fafc;
   display: flex;
   flex-direction: column;
@@ -82,7 +82,7 @@
 
 .refresh-btn {
   background: #3b82f6;
-  color: #ffffff;
+  color: var(--btn-text);
   border: none;
   border-radius: 8px;
   padding: 0.5rem 1rem;
@@ -211,7 +211,7 @@
   font-size: 1.15rem;
   font-weight: 700;
   margin: 0 0 0.4rem;
-  color: #ffffff;
+  color: var(--btn-text);
 }
 
 .crop-tag {

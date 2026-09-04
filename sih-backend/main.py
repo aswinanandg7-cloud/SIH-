@@ -7,15 +7,18 @@ AgroProcure Unified Backend API
 
 import datetime
 import random
-import sqlite3
+import os
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
+from supabase import create_client, Client
 
-app = FastAPI(title="AgroProcure Unified API (SQLite Engine)", version="2.0.0")
+load_dotenv()
 
-# Enable CORS for Frontend & External Clients
+app = FastAPI(title="AgroProcure Unified API (Supabase API Engine)", version="2.0.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,9 +27,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_FILE = "agroprocure.db"
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_PUBLISHABLE_KEY")
 
-# 4 Standard Daily Time Slots
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("WARNING: SUPABASE_URL or SUPABASE_SECRET_KEY is missing. Add them to .env.")
+
+def get_supabase() -> Client:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase not configured in .env")
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
 TIME_SLOTS = [
     "09:00 AM - 11:00 AM",
     "11:00 AM - 01:00 PM",
@@ -43,98 +54,13 @@ DEFAULT_PROCUREMENT_CENTERS = [
 ]
 
 
-def get_db():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def init_db():
-    conn = get_db()
-    cursor = conn.cursor()
-
-    # 1. Slots table (legacy / fixed slots)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS slots (
-            id INTEGER PRIMARY KEY,
-            center TEXT NOT NULL,
-            crop TEXT NOT NULL,
-            time TEXT NOT NULL,
-            max_capacity INTEGER NOT NULL
-        )
-    """)
-
-    # 2. Procurement Plans table (stores daily limits set by Govt Agri Clerk)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS procurement_plans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            center_id INTEGER NOT NULL,
-            center_name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            limit_tons REAL NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(date, center_id)
-        )
-    """)
-
-    # 3. Enhanced Bookings table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS bookings (
-            token TEXT PRIMARY KEY,
-            farmer_name TEXT NOT NULL,
-            farmer_id TEXT NOT NULL,
-            center_id INTEGER,
-            center_name TEXT,
-            slot_id INTEGER,
-            crop TEXT NOT NULL,
-            quantity_quintals REAL DEFAULT 0.0,
-            quantity_tons REAL DEFAULT 0.0,
-            time_slot TEXT NOT NULL,
-            sub_queue_id TEXT NOT NULL,
-            booking_date TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # Populate Initial Static Slots if empty (for backward compatibility)
-    cursor.execute("SELECT COUNT(*) FROM slots")
-    if cursor.fetchone()[0] == 0:
-        initial_slots = [
-            (1, "Center 1 - North Cereals Hub", "Cereals", "09:00 AM - 11:00 AM", 50),
-            (2, "Center 1 - North Cereals Hub", "Cereals", "11:00 AM - 01:00 PM", 50),
-            (3, "Center 1 - North Cereals Hub", "Cereals", "02:00 PM - 04:00 PM", 50),
-            (4, "Center 1 - North Cereals Hub", "Cereals", "04:00 PM - 06:00 PM", 50),
-            (5, "Center 3 - East Pulse Depot", "Pulses", "09:00 AM - 11:00 AM", 50),
-            (6, "Center 3 - East Pulse Depot", "Pulses", "11:00 AM - 01:00 PM", 50),
-            (7, "Center 3 - East Pulse Depot", "Pulses", "02:00 PM - 04:00 PM", 50),
-            (8, "Center 3 - East Pulse Depot", "Pulses", "04:00 PM - 06:00 PM", 50),
-        ]
-        cursor.executemany(
-            "INSERT INTO slots (id, center, crop, time, max_capacity) VALUES (?, ?, ?, ?, ?)",
-            initial_slots,
-        )
-
-    conn.commit()
-    conn.close()
-
-
-init_db()
-
-
-# -----------------------------------------------------------------------------
-# Pydantic Request Models
-# -----------------------------------------------------------------------------
-
 class BookingRequest(BaseModel):
     farmer_name: str
     farmer_id: str
     center_id: Optional[int] = None
-    quantity_tons: Optional[float] = None  # quantity in quintals from bot
+    quantity_tons: Optional[float] = None
     slot_id: Optional[int] = None
-    date: Optional[str] = None  # format: YYYY-MM-DD (defaults to today)
+    date: Optional[str] = None
 
 
 class CenterLimitItem(BaseModel):
@@ -149,64 +75,42 @@ class ProcurementPlanRequest(BaseModel):
     plans: list[CenterLimitItem]
 
 
-def generate_unique_token(cursor) -> str:
+class StatusUpdateRequest(BaseModel):
+    status: str
+
+
+def generate_unique_token(supabase: Client) -> str:
     while True:
         token = str(random.randint(100000, 999999))
-        cursor.execute("SELECT token FROM bookings WHERE token = ?", (token,))
-        if not cursor.fetchone():
+        res = supabase.table("bookings").select("token").eq("token", token).execute()
+        if not res.data:
             return token
 
 
-def get_active_plan_for_date(cursor, target_date: str) -> list[dict]:
-    """Helper to get center limits for a date, fallback to latest plan or defaults."""
-    cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (target_date,))
-    rows = cursor.fetchall()
-    if rows and len(rows) > 0:
-        return [
-            {
-                "center_id": r["center_id"],
-                "center_name": r["center_name"],
-                "category": r["category"],
-                "limit_tons": float(r["limit_tons"]),
-            }
-            for r in rows
-        ]
+def get_active_plan_for_date(supabase: Client, target_date: str) -> list[dict]:
+    res = supabase.table("procurement_plans").select("*").eq("date", target_date).order("center_id").execute()
+    if res.data:
+        return res.data
 
-    # Check most recent plan
-    cursor.execute("SELECT DISTINCT date FROM procurement_plans ORDER BY id DESC LIMIT 1")
-    last_date_row = cursor.fetchone()
-    if last_date_row:
-        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (last_date_row["date"],))
-        rows = cursor.fetchall()
-        return [
-            {
-                "center_id": r["center_id"],
-                "center_name": r["center_name"],
-                "category": r["category"],
-                "limit_tons": float(r["limit_tons"]),
-            }
-            for r in rows
-        ]
+    res = supabase.table("procurement_plans").select("date").order("id", desc=True).limit(1).execute()
+    if res.data:
+        last_date = res.data[0]["date"]
+        res_last = supabase.table("procurement_plans").select("*").eq("date", last_date).order("center_id").execute()
+        if res_last.data:
+            return res_last.data
 
     return DEFAULT_PROCUREMENT_CENTERS
 
 
-# -----------------------------------------------------------------------------
-# Endpoints
-# -----------------------------------------------------------------------------
-
-# 1. GET /centers (Called by Telegram Bot after Location Share)
 @app.get("/centers")
 def get_centers(crop: Optional[str] = Query(None), date: Optional[str] = Query(None)):
     today_str = date or datetime.date.today().isoformat()
-    conn = get_db()
-    cursor = conn.cursor()
+    supabase = get_supabase()
 
-    active_plans = get_active_plan_for_date(cursor, today_str)
+    active_plans = get_active_plan_for_date(supabase, today_str)
 
     centers_result = []
     for center in active_plans:
-        # Filter by crop if provided
         if crop and center["category"].strip().lower() != crop.strip().lower():
             continue
 
@@ -214,12 +118,8 @@ def get_centers(crop: Optional[str] = Query(None), date: Optional[str] = Query(N
         max_tons = center["limit_tons"]
         max_quintals = max_tons * 10.0
 
-        # Calculate filled quintals booked for this center on target date
-        cursor.execute(
-            "SELECT COALESCE(SUM(quantity_quintals), 0.0) FROM bookings WHERE center_id = ? AND booking_date = ?",
-            (center_id, today_str),
-        )
-        filled_quintals = float(cursor.fetchone()[0])
+        res = supabase.table("bookings").select("quantity_quintals").eq("center_id", center_id).eq("booking_date", today_str).execute()
+        filled_quintals = sum(float(b["quantity_quintals"]) for b in res.data) if res.data else 0.0
         remaining_quintals = max(0.0, max_quintals - filled_quintals)
 
         centers_result.append({
@@ -233,83 +133,60 @@ def get_centers(crop: Optional[str] = Query(None), date: Optional[str] = Query(N
             "remaining_tons": remaining_quintals / 10.0,
         })
 
-    conn.close()
     return {"date": today_str, "centers": centers_result}
 
 
-# 2. POST /book (Called by Telegram Bot OR Slot Frontend)
 @app.post("/book")
 def create_booking(request: BookingRequest):
     target_date = request.date or datetime.date.today().isoformat()
-    conn = get_db()
-    cursor = conn.cursor()
+    supabase = get_supabase()
 
-    # Branch A: Center & Quantity Based Booking (Telegram Bot flow)
     if request.center_id is not None:
-        active_plans = get_active_plan_for_date(cursor, target_date)
+        active_plans = get_active_plan_for_date(supabase, target_date)
         target_center = next((c for c in active_plans if c["center_id"] == request.center_id), None)
 
         if not target_center:
-            conn.close()
             raise HTTPException(status_code=404, detail=f"Center #{request.center_id} not found")
 
         qty_quintals = float(request.quantity_tons or 0.0)
         if qty_quintals <= 0:
-            conn.close()
             raise HTTPException(status_code=400, detail="Booking quantity must be greater than zero")
 
         max_quintals = target_center["limit_tons"] * 10.0
 
-        # Check existing bookings today
-        cursor.execute(
-            "SELECT COALESCE(SUM(quantity_quintals), 0.0), COUNT(*) FROM bookings WHERE center_id = ? AND booking_date = ?",
-            (request.center_id, target_date),
-        )
-        row = cursor.fetchone()
-        filled_so_far = float(row[0])
-        booking_count_today = int(row[1])
+        res = supabase.table("bookings").select("quantity_quintals").eq("center_id", request.center_id).eq("booking_date", target_date).execute()
+        filled_so_far = sum(float(b["quantity_quintals"]) for b in res.data) if res.data else 0.0
+        booking_count_today = len(res.data) if res.data else 0
 
         if filled_so_far + qty_quintals > max_quintals:
-            conn.close()
             raise HTTPException(
                 status_code=400,
                 detail=f"Center capacity exceeded! Remaining space: {max(0.0, max_quintals - filled_so_far):.1f} quintals",
             )
 
-        # Dynamic 4-quarter time slot assignment
         quarter_size = max(1.0, max_quintals / 4.0)
         slot_index = min(3, int(filled_so_far // quarter_size))
         assigned_time = TIME_SLOTS[slot_index]
 
-        token = generate_unique_token(cursor)
+        token = generate_unique_token(supabase)
         sub_queue_id = f"C{target_center['center_id']}-S{slot_index + 1}-{booking_count_today + 1:02d}"
 
-        cursor.execute(
-            """
-            INSERT INTO bookings (
-                token, farmer_name, farmer_id, center_id, center_name, slot_id, crop,
-                quantity_quintals, quantity_tons, time_slot, sub_queue_id, booking_date, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                token,
-                request.farmer_name,
-                request.farmer_id,
-                target_center["center_id"],
-                target_center["center_name"],
-                None,
-                target_center["category"],
-                qty_quintals,
-                qty_quintals / 10.0,
-                assigned_time,
-                sub_queue_id,
-                target_date,
-                "BOOKED",
-            ),
-        )
-
-        conn.commit()
-        conn.close()
+        new_booking = {
+            "token": token,
+            "farmer_name": request.farmer_name,
+            "farmer_id": request.farmer_id,
+            "center_id": target_center["center_id"],
+            "center_name": target_center["center_name"],
+            "crop": target_center["category"],
+            "quantity_quintals": qty_quintals,
+            "quantity_tons": qty_quintals / 10.0,
+            "time_slot": assigned_time,
+            "sub_queue_id": sub_queue_id,
+            "booking_date": target_date,
+            "status": "BOOKED"
+        }
+        
+        supabase.table("bookings").insert(new_booking).execute()
 
         return {
             "status": "SUCCESS",
@@ -321,49 +198,37 @@ def create_booking(request: BookingRequest):
             "message": "Center slot booked successfully!",
         }
 
-    # Branch B: Legacy slot_id booking
     elif request.slot_id is not None:
-        cursor.execute("SELECT * FROM slots WHERE id = ?", (request.slot_id,))
-        target_slot = cursor.fetchone()
-        if not target_slot:
-            conn.close()
+        res = supabase.table("slots").select("*").eq("id", request.slot_id).execute()
+        if not res.data:
             raise HTTPException(status_code=404, detail="Slot not found")
+        target_slot = res.data[0]
 
-        cursor.execute("SELECT COUNT(*) FROM bookings WHERE slot_id = ?", (request.slot_id,))
-        booked_count = cursor.fetchone()[0]
+        res_bookings = supabase.table("bookings").select("id", count="exact").eq("slot_id", request.slot_id).execute()
+        booked_count = res_bookings.count if res_bookings.count else 0
 
         if booked_count >= target_slot["max_capacity"]:
-            conn.close()
             raise HTTPException(status_code=400, detail="Slot is full")
 
         sub_queue_id = f"SLOT{target_slot['id']}-{booked_count + 1:02d}"
-        token = generate_unique_token(cursor)
+        token = generate_unique_token(supabase)
 
-        cursor.execute(
-            """
-            INSERT INTO bookings (
-                token, farmer_name, farmer_id, slot_id, center_name, crop,
-                quantity_quintals, quantity_tons, time_slot, sub_queue_id, booking_date, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                token,
-                request.farmer_name,
-                request.farmer_id,
-                target_slot["id"],
-                target_slot["center"],
-                target_slot["crop"],
-                10.0,
-                1.0,
-                target_slot["time"],
-                sub_queue_id,
-                target_date,
-                "BOOKED",
-            ),
-        )
-
-        conn.commit()
-        conn.close()
+        new_booking = {
+            "token": token,
+            "farmer_name": request.farmer_name,
+            "farmer_id": request.farmer_id,
+            "slot_id": target_slot["id"],
+            "center_name": target_slot["center"],
+            "crop": target_slot["crop"],
+            "quantity_quintals": 10.0,
+            "quantity_tons": 1.0,
+            "time_slot": target_slot["time"],
+            "sub_queue_id": sub_queue_id,
+            "booking_date": target_date,
+            "status": "BOOKED"
+        }
+        
+        supabase.table("bookings").insert(new_booking).execute()
 
         return {
             "status": "SUCCESS",
@@ -376,22 +241,19 @@ def create_booking(request: BookingRequest):
         }
 
     else:
-        conn.close()
         raise HTTPException(status_code=400, detail="Must provide either center_id or slot_id")
 
 
-# 3. GET /slots (Legacy / Slot Visibility Component)
 @app.get("/slots")
 def get_slots():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM slots")
-    slots = cursor.fetchall()
+    supabase = get_supabase()
+    res = supabase.table("slots").select("*").execute()
+    slots = res.data if res.data else []
 
     slots_response = []
     for slot in slots:
-        cursor.execute("SELECT COUNT(*) FROM bookings WHERE slot_id = ?", (slot["id"],))
-        booked_count = cursor.fetchone()[0]
+        res_bookings = supabase.table("bookings").select("id", count="exact").eq("slot_id", slot["id"]).execute()
+        booked_count = res_bookings.count if res_bookings.count else 0
         slots_response.append({
             "id": slot["id"],
             "center": slot["center"],
@@ -401,29 +263,23 @@ def get_slots():
             "remaining": max(0, slot["max_capacity"] - booked_count),
         })
 
-    conn.close()
     return {"slots": slots_response}
 
 
-# 4. POST /verify/{token} (Gate Check-in Verification)
 @app.post("/verify/{token}")
 def verify_token(token: str):
-    conn = get_db()
-    cursor = conn.cursor()
+    supabase = get_supabase()
 
-    cursor.execute("SELECT * FROM bookings WHERE token = ?", (token,))
-    booking = cursor.fetchone()
-
-    if not booking:
-        conn.close()
+    res = supabase.table("bookings").select("*").eq("token", token).execute()
+    if not res.data:
         raise HTTPException(status_code=404, detail="Invalid token code")
 
+    booking = res.data[0]
+
     if booking["status"] == "ARRIVED":
-        conn.close()
         raise HTTPException(status_code=400, detail="This token has already been checked in")
 
-    cursor.execute("UPDATE bookings SET status = 'ARRIVED' WHERE token = ?", (token,))
-    conn.commit()
+    supabase.table("bookings").update({"status": "ARRIVED"}).eq("token", token).execute()
 
     result = {
         "status": "VERIFIED",
@@ -437,20 +293,16 @@ def verify_token(token: str):
         "booking_date": booking["booking_date"],
         "message": "Token verified. Farmer marked as ARRIVED.",
     }
-    conn.close()
     return result
 
 
-# 5. GET /procurement-plan & POST /procurement-plan (Clerk Daily Planning)
 @app.get("/procurement-plan")
 def get_procurement_plan(date: Optional[str] = None):
-    conn = get_db()
-    cursor = conn.cursor()
+    supabase = get_supabase()
 
     if date:
-        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (date,))
-        rows = cursor.fetchall()
-        if rows:
+        res = supabase.table("procurement_plans").select("*").eq("date", date).order("center_id").execute()
+        if res.data:
             plans = [
                 {
                     "center_id": r["center_id"],
@@ -458,49 +310,41 @@ def get_procurement_plan(date: Optional[str] = None):
                     "category": r["category"],
                     "limit_tons": r["limit_tons"],
                 }
-                for r in rows
+                for r in res.data
             ]
-            conn.close()
             return {"date": date, "is_saved": True, "plans": plans}
 
-    cursor.execute("SELECT DISTINCT date FROM procurement_plans ORDER BY id DESC LIMIT 1")
-    last_date_row = cursor.fetchone()
-    if last_date_row:
-        last_date = last_date_row["date"]
-        cursor.execute("SELECT * FROM procurement_plans WHERE date = ? ORDER BY center_id", (last_date,))
-        rows = cursor.fetchall()
-        plans = [
-            {
-                "center_id": r["center_id"],
-                "center_name": r["center_name"],
-                "category": r["category"],
-                "limit_tons": r["limit_tons"],
-            }
-            for r in rows
-        ]
-        conn.close()
-        return {"date": date, "is_saved": False, "copied_from_date": last_date, "plans": plans}
+    res = supabase.table("procurement_plans").select("date").order("id", desc=True).limit(1).execute()
+    if res.data:
+        last_date = res.data[0]["date"]
+        res_last = supabase.table("procurement_plans").select("*").eq("date", last_date).order("center_id").execute()
+        if res_last.data:
+            plans = [
+                {
+                    "center_id": r["center_id"],
+                    "center_name": r["center_name"],
+                    "category": r["category"],
+                    "limit_tons": r["limit_tons"],
+                }
+                for r in res_last.data
+            ]
+            return {"date": date, "is_saved": False, "copied_from_date": last_date, "plans": plans}
 
-    conn.close()
     return {"date": date, "is_saved": False, "plans": DEFAULT_PROCUREMENT_CENTERS}
 
 
 @app.post("/procurement-plan")
 def save_procurement_plan(request: ProcurementPlanRequest):
-    conn = get_db()
-    cursor = conn.cursor()
+    supabase = get_supabase()
 
     for item in request.plans:
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO procurement_plans (date, center_id, center_name, category, limit_tons)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (request.date, item.center_id, item.center_name, item.category, item.limit_tons),
-        )
-
-    conn.commit()
-    conn.close()
+        supabase.table("procurement_plans").upsert({
+            "date": request.date,
+            "center_id": item.center_id,
+            "center_name": item.center_name,
+            "category": item.category,
+            "limit_tons": item.limit_tons
+        }, on_conflict="date, center_id").execute()
 
     return {
         "status": "SUCCESS",
@@ -510,14 +354,40 @@ def save_procurement_plan(request: ProcurementPlanRequest):
     }
 
 
-# 6. GET /live-report (Real-time Live Reporting for Frontend Clerk Tab 2)
+@app.get("/booking/{token}")
+def get_booking(token: str):
+    supabase = get_supabase()
+    res = supabase.table("bookings").select("*").eq("token", token).execute()
+    
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Booking not found")
+        
+    return res.data[0]
+
+
+@app.put("/booking/{token}/status")
+def update_booking_status(token: str, request: StatusUpdateRequest):
+    valid_statuses = ["BOOKED", "ARRIVED", "WEIGHED", "GRADED", "COLLECTED", "PAID"]
+    if request.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="Invalid status")
+        
+    supabase = get_supabase()
+    
+    res = supabase.table("bookings").select("token").eq("token", token).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Booking not found")
+        
+    supabase.table("bookings").update({"status": request.status}).eq("token", token).execute()
+    
+    return {"message": "Status updated successfully", "status": request.status}
+
+
 @app.get("/live-report")
 def get_live_report(date: Optional[str] = None):
     target_date = date or datetime.date.today().isoformat()
-    conn = get_db()
-    cursor = conn.cursor()
+    supabase = get_supabase()
 
-    active_plans = get_active_plan_for_date(cursor, target_date)
+    active_plans = get_active_plan_for_date(supabase, target_date)
 
     total_tokens = 0
     total_procured_tons = 0.0
@@ -528,13 +398,10 @@ def get_live_report(date: Optional[str] = None):
         c_id = center["center_id"]
         c_limit_tons = center["limit_tons"]
 
-        cursor.execute(
-            "SELECT COUNT(*), COALESCE(SUM(quantity_tons), 0.0) FROM bookings WHERE center_id = ? AND booking_date = ?",
-            (c_id, target_date),
-        )
-        c_tokens, c_booked_tons = cursor.fetchone()
-        c_tokens = int(c_tokens)
-        c_booked_tons = float(c_booked_tons)
+        res = supabase.table("bookings").select("quantity_tons").eq("center_id", c_id).eq("booking_date", target_date).execute()
+        
+        c_tokens = len(res.data) if res.data else 0
+        c_booked_tons = sum(float(b["quantity_tons"]) for b in res.data) if res.data else 0.0
 
         total_tokens += c_tokens
         total_procured_tons += c_booked_tons
@@ -552,7 +419,6 @@ def get_live_report(date: Optional[str] = None):
 
     overall_utilization = round((total_procured_tons / total_capacity_tons * 100.0), 1) if total_capacity_tons > 0 else 0.0
 
-    conn.close()
     return {
         "date": target_date,
         "total_tokens_issued": total_tokens,

@@ -1,7 +1,7 @@
 .procurement-wrapper {
   min-height: 100vh;
-  background: #0f172a;
-  color: #f8fafc;
+  background: var(--bg-app);
+  color: var(--text-primary);
   display: flex;
   flex-direction: column;
 }
@@ -37,7 +37,7 @@
   font-size: 1.2rem;
   font-weight: 700;
   margin: 0;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 .gov-badge {
@@ -66,12 +66,12 @@
 .user-name {
   font-size: 0.875rem;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 .user-role-pill {
   font-size: 0.7rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .logout-btn {
@@ -138,13 +138,13 @@
 
 .stat-label {
   font-size: 0.75rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .stat-value {
   font-size: 1.25rem;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 .toolbar {
@@ -177,7 +177,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 0.6rem 1rem 0.6rem 2.4rem;
-  color: #ffffff;
+  color: var(--text-primary);
   font-size: 0.875rem;
   outline: none;
   box-sizing: border-box;
@@ -188,7 +188,7 @@
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .filter-box select {
@@ -196,14 +196,14 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 0.6rem 0.85rem;
-  color: #ffffff;
+  color: var(--text-primary);
   font-size: 0.85rem;
   outline: none;
 }
 
 .add-plan-btn {
   background: #10b981;
-  color: #ffffff;
+  color: var(--text-primary);
   border: none;
   border-radius: 10px;
   padding: 0.65rem 1.1rem;
@@ -226,7 +226,7 @@
 .no-data {
   text-align: center;
   padding: 3rem;
-  color: #64748b;
+  color: var(--text-secondary);
   background: rgba(30, 41, 59, 0.4);
   border-radius: 12px;
 }
@@ -260,7 +260,7 @@
   font-size: 1.1rem;
   font-weight: 700;
   margin: 0.2rem 0 0;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 .status-badge {
@@ -287,13 +287,13 @@
 .detail-label {
   display: block;
   font-size: 0.7rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .detail-val {
   font-size: 0.875rem;
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--text-primary);
 }
 
 .progress-section {
@@ -336,7 +336,7 @@
 }
 
 .modal-content {
-  background: #1e293b;
+  background: var(--bg-panel);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
   padding: 1.5rem;
@@ -360,7 +360,7 @@
 
 .modal-form-group label {
   font-size: 0.8rem;
-  color: #cbd5e1;
+  color: var(--text-secondary);
 }
 
 .modal-form-group input, .modal-form-group select {
@@ -368,7 +368,7 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 0.65rem 0.85rem;
-  color: #ffffff;
+  color: var(--text-primary);
   outline: none;
 }
 
@@ -382,7 +382,7 @@
 .cancel-btn {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #94a3b8;
+  color: var(--text-secondary);
   padding: 0.5rem 1rem;
   border-radius: 8px;
   cursor: pointer;
@@ -391,7 +391,7 @@
 .submit-btn {
   background: #10b981;
   border: none;
-  color: white;
+  color: var(--text-primary);
   padding: 0.5rem 1rem;
   border-radius: 8px;
   font-weight: 600;

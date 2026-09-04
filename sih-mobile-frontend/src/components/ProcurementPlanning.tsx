@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import type { ProcurementPlanItem } from '../types/auth';
 import './ProcurementPlanning.css';
@@ -55,7 +55,17 @@ const INITIAL_PLANS: ProcurementPlanItem[] = [
 ];
 
 export const ProcurementPlanning: React.FC = () => {
+
   const { user, logout } = useAuth();
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('app-theme') as 'dark' | 'light') || 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('app-theme', theme);
+  }, [theme]);
+
   const [plans, setPlans] = useState<ProcurementPlanItem[]>(INITIAL_PLANS);
   const [selectedCrop, setSelectedCrop] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -115,8 +125,19 @@ export const ProcurementPlanning: React.FC = () => {
           </div>
         </div>
 
+
         <div className="user-profile-bar">
+          <button 
+            type="button" 
+            className="theme-toggle-btn" 
+            style={{ marginRight: '1rem' }}
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            title="Toggle Theme"
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           <div className="user-info">
+
             <span className="user-name">{user?.name || user?.username}</span>
             <span className="user-role-pill">Govt Agri Officer</span>
           </div>

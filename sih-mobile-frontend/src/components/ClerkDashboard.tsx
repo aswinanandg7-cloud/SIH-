@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import type { DailyCenterPlan } from '../types/auth';
+import { DeliveryStatusPanel } from './DeliveryStatusPanel';
 import './ClerkDashboard.css';
 
 const DEFAULT_CENTERS: DailyCenterPlan[] = [
@@ -13,8 +14,19 @@ const DEFAULT_CENTERS: DailyCenterPlan[] = [
 
 export const ClerkDashboard: React.FC = () => {
   const { user, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState<'planner' | 'live'>('planner');
+
+  const [activeTab, setActiveTab] = useState<'planner' | 'live' | 'status'>('planner');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('app-theme') as 'dark' | 'light') || 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('app-theme', theme);
+  }, [theme]);
+
+
 
   // Date selection state for Procurement Planner (YYYY-MM-DD)
   const todayStr = new Date().toISOString().split('T')[0];
@@ -200,7 +212,23 @@ export const ClerkDashboard: React.FC = () => {
               <span className="nav-subtitle">Token & capacity metrics</span>
             </div>
           </button>
+
+          <button
+            type="button"
+            className={`nav-item-btn ${activeTab === 'status' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTab('status');
+              setSidebarOpen(false);
+            }}
+          >
+            <span className="nav-icon">🚚</span>
+            <div className="nav-label-container">
+              <span className="nav-title">Token Status</span>
+              <span className="nav-subtitle">Gate & delivery updates</span>
+            </div>
+          </button>
         </nav>
+
 
         <div className="side-nav-footer">
           <button type="button" className="sidebar-logout-btn" onClick={logout}>
@@ -223,12 +251,22 @@ export const ClerkDashboard: React.FC = () => {
               ☰
             </button>
             <div className="current-page-title">
-              {activeTab === 'planner' ? 'The Procurement Planner' : 'The Live Report'}
+              {activeTab === 'planner' ? 'The Procurement Planner' : activeTab === 'live' ? 'The Live Report' : 'Token Status'}
             </div>
           </div>
 
+
           <div className="top-bar-right">
+            <button 
+              type="button" 
+              className="theme-toggle-btn" 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              title="Toggle Theme"
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
             <span className="role-chip">Role: govt-agri-clerk</span>
+
             <button type="button" className="top-logout-btn" onClick={logout}>
               Sign Out
             </button>
@@ -551,6 +589,11 @@ export const ClerkDashboard: React.FC = () => {
               </div>
             </div>
           </main>
+        )}
+
+        {/* Page 3: Delivery Status */}
+        {activeTab === 'status' && (
+          <DeliveryStatusPanel />
         )}
       </div>
     </div>
