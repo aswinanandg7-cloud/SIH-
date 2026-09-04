@@ -1,333 +1,561 @@
+# -*- coding: utf-8 -*-
 """
-AgroProcure Telegram Bot Frontend
-- Collects farmer details, crop choice, location, and quantity in Quintals.
-- Fetches active procurement centers from GET /centers?crop={crop}.
-- Sends booking requests to POST /book with full payload mapping.
-- Includes Fallback/Offline mode for seamless live demos.
+SIH PS 32 — Farmer-facing Telegram bot (bilingual EN/HI version).
+Connected to the Supabase-backed FastAPI backend (main__2_.py).
+
+Flow:
+  /start -> choose language (English / हिंदी)
+         -> type full name
+         -> type Farmer ID / Aadhaar / Registration Number
+         -> pick crop (Cereals / Pulses)
+         -> pick a preset quantity or type a custom one
+         -> share GPS location OR view all centres directly (no location)
+         -> pick a centre
+         -> booking confirmed: text pass (MSP payout, queue position) + QR code image
+
+Talks to the backend via:
+  GET  /centers?crop=...
+  POST /book   (center_id + quantity_tons, where quantity_tons is actually
+                quintals — see note below)
+
+FIELD NAMING NOTE: despite the name, "quantity_tons" carries a QUINTAL
+value end-to-end in this system (the backend stores it as-is in
+quantity_quintals and separately derives real tons as quantity_tons/10
+for its own bookkeeping, but the value it *returns* to the bot under the
+key "quantity_tons" is still quintals). The bot and MSP math below assume
+quintals throughout, matching the backend, so calculations are correct —
+but the field name itself is misleading and worth renaming if you touch
+the backend again.
+
+MSP RATES BELOW ARE REPRESENTATIVE, NOT LIVE: "Cereals" is priced at the
+wheat MSP and "Pulses" at the gram (chana) MSP. Confirm current figures
+at pib.gov.in / cacp.gov.in before quoting them to judges or farmers.
+
+KNOWN LIMITATION: the backend's /centers and /book responses don't
+include latitude/longitude, so "nearest centre" sorting never actually
+activates — it silently falls back to sorting by remaining capacity
+instead (see has_valid_coords below). Add lat/lon columns to the centers
+data on the backend to turn real distance sorting back on.
+
+PREREQUISITE: the backend requires SUPABASE_URL and
+SUPABASE_SECRET_KEY/SUPABASE_PUBLISHABLE_KEY in its own .env. If those
+aren't set, every /centers and /book call returns HTTP 500 and the bot
+will show its generic "couldn't reach the booking server" message —
+that's not a bot bug, it means the backend's Supabase config is missing.
 """
 
 import logging
-import random
+import math
 import os
+import re
+from io import BytesIO
+
 import httpx
+import qrcode
+from dotenv import load_dotenv
 from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardRemove,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
 )
+from telegram.constants import ParseMode
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
+    Application,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
-    filters,
     ConversationHandler,
+    MessageHandler,
+    filters,
 )
 
-# Logging Setup
+load_dotenv()
+
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# Config & API Setup
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+QUANTITY_PRESETS = [5, 10, 20, 50, 100]
 
-# Conversation States
-NAME, FARMER_ID, CROP, QUANTITY, LOCATION, CENTER_SELECT = range(6)
-
-# Default Fallback Centers (Used if backend API is temporarily offline)
-DEFAULT_CENTERS = {
-    "Cereals": [
-        {"id": 1, "name": "Center 1 - North Cereals Hub", "category": "Cereals", "remaining_quintals": 5000.0},
-        {"id": 2, "name": "Center 2 - Central Grain Silo", "category": "Cereals", "remaining_quintals": 4500.0},
-    ],
-    "Pulses": [
-        {"id": 3, "name": "Center 3 - East Pulse Depot", "category": "Pulses", "remaining_quintals": 3000.0},
-        {"id": 4, "name": "Center 4 - South Legume Yard", "category": "Pulses", "remaining_quintals": 2500.0},
-        {"id": 5, "name": "Center 5 - West Gram Storage", "category": "Pulses", "remaining_quintals": 2000.0},
-    ],
+MSP_PER_QUINTAL = {
+    "Cereals": 2585,  # Wheat MSP, 2026-27 marketing year
+    "Pulses": 5650,   # Gram (chana) MSP, 2025-26 Rabi marketing season
 }
 
-TIME_SLOTS = [
-    "09:00 AM - 11:00 AM",
-    "11:00 AM - 01:00 PM",
-    "02:00 PM - 04:00 PM",
-    "04:00 PM - 06:00 PM",
-]
+# Conversation states
+LANGUAGE, NAME, FARMER_ID, CROP, QUANTITY_SELECT, QUANTITY_CUSTOM, LOCATION, CENTER_SELECT = range(8)
 
 
-# -----------------------------------------------------------------------------
-# API Helper Functions
-# -----------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# i18n
+# --------------------------------------------------------------------------
+
+TRANSLATIONS = {
+    "en": {
+        "choose_language": "🌐 Please choose your language:",
+        "name_prompt": (
+            "🌾 Welcome to AgroProcure Slot Booking System!\n\n"
+            "Please enter your *Full Name*:"
+        ),
+        "name_invalid": "Please type a valid name (letters only, at least 2 characters).",
+        "farmer_id_prompt": (
+            "Thank you, *{name}*!\n\n"
+            "Now enter your *Farmer ID / Aadhaar / Registration Number*:"
+        ),
+        "farmer_id_invalid": "Please enter a valid ID (at least 4 characters, letters/numbers only).",
+        "crop_prompt": "🌾 Please choose your crop category:",
+        "crop_cereals": "🌾 Cereals",
+        "crop_pulses": "🫘 Pulses",
+        "quantity_prompt": "Tap a preset quantity button or choose Custom:",
+        "quantity_preset_btn": "{qty} Qtl",
+        "quantity_custom_btn": "✏️ Custom Amount",
+        "quantity_custom_prompt": "Please type the quantity in quintals (e.g. 7.5):",
+        "quantity_invalid": "Please send a positive number, e.g. 5 or 2.5",
+        "quantity_set": "⚖️ Quantity: {qty:g} quintals",
+        "location_prompt": "Please share your location:",
+        "share_location_btn": "📍 Share GPS Location",
+        "found_location": "✅ Successfully found location!",
+        "centers_heading_all": "🏢 Available centres:",
+        "center_line": "{name} — {dist}{remaining:.0f}/{max:.0f} Qtl available",
+        "no_centers": (
+            "😕 No centre for {crop} has {qty:g} quintals of space left today. "
+            "Try a smaller quantity or check back later. (/start to retry)"
+        ),
+        "server_error": "⚠️ Couldn't reach the booking server. Please try again in a moment. (/start to retry)",
+        "booking_failed": "⚠️ Booking failed: {error}\n\nSend /start to try again.",
+        "confirmation": (
+            "✅ Booking confirmed!\n\n"
+            "👤 Farmer Name: *{farmer_name}*\n"
+            "🆔 Farmer ID: *{farmer_id}*\n"
+            "🌾 Crop: *{crop}*\n"
+            "⚖️ Quantity: *{quantity:g} quintals*\n"
+            "🏢 Centre: *{center}*\n"
+            "🕒 Time Slot: *{time}*\n"
+            "🎫 Token Code: *{token}*\n"
+            "{sub_queue_line}"
+            "{payout_line}"
+            "{maps_line}\n"
+            "Show the QR code below at the centre gate on arrival."
+        ),
+        "sub_queue_line": "🔢 Queue Position: *{sub_queue_id}*\n",
+        "payout_line": "💰 MSP Rate: ₹{rate:,}/Qtl\n💳 Estimated Payout: ₹{payout:,.0f} (indicative)\n",
+        "maps_line": "🗺️ Navigate: {url}\n",
+        "qr_caption": "🎫 Token {token} — show this QR code at gate check-in.",
+        "help_text": (
+            "/start — begin a new booking\n"
+            "/cancel — cancel the current booking flow\n"
+            "/help — show this message"
+        ),
+        "cancelled": "Cancelled. Send /start to begin again.",
+    },
+    "hi": {
+        "choose_language": "🌐 कृपया अपनी भाषा चुनें:",
+        "name_prompt": (
+            "🌾 एग्रोप्रोक्योर स्लॉट बुकिंग प्रणाली में आपका स्वागत है!\n\n"
+            "कृपया अपना *पूरा नाम* दर्ज करें:"
+        ),
+        "name_invalid": "कृपया एक मान्य नाम दर्ज करें (केवल अक्षर, कम से कम 2 अक्षर)।",
+        "farmer_id_prompt": (
+            "धन्यवाद, *{name}*!\n\n"
+            "अब अपना *किसान आईडी / आधार / पंजीकरण संख्या* दर्ज करें:"
+        ),
+        "farmer_id_invalid": "कृपया एक मान्य आईडी दर्ज करें (कम से कम 4 अक्षर, केवल अक्षर/अंक)।",
+        "crop_prompt": "🌾 कृपया अपनी फसल श्रेणी चुनें:",
+        "crop_cereals": "🌾 अनाज / Cereals",
+        "crop_pulses": "🫘 दालें / Pulses",
+        "quantity_prompt": "निर्धारित मात्रा बटन चुनें या अन्य मात्रा दर्ज करें:",
+        "quantity_preset_btn": "{qty} क्विंटल",
+        "quantity_custom_btn": "✏️ अन्य मात्रा",
+        "quantity_custom_prompt": "कृपया मात्रा क्विंटल में लिखें (उदाहरण: 7.5):",
+        "quantity_invalid": "कृपया एक धनात्मक संख्या भेजें, जैसे 5 या 2.5",
+        "quantity_set": "⚖️ मात्रा: {qty:g} क्विंटल",
+        "location_prompt": "कृपया अपना स्थान साझा करें:",
+        "share_location_btn": "📍 वर्तमान स्थान साझा करें",
+        "found_location": "✅ स्थान सफलतापूर्वक मिल गया!",
+        "centers_heading_all": "🏢 उपलब्ध केंद्र:",
+        "center_line": "{name} — {dist}उपलब्ध क्षमता: {remaining:.0f}/{max:.0f} क्विंटल",
+        "no_centers": (
+            "😕 {crop} के लिए आज किसी भी केंद्र में {qty:g} क्विंटल जगह उपलब्ध नहीं है। "
+            "कृपया कम मात्रा आज़माएँ या बाद में जांचें। (फिर से शुरू करने हेतु /start भेजें)"
+        ),
+        "server_error": "⚠️ बुकिंग सर्वर से संपर्क नहीं हो पाया। कृपया थोड़ी देर बाद पुनः प्रयास करें। (/start भेजें)",
+        "booking_failed": "⚠️ बुकिंग विफल: {error}\n\nपुनः प्रयास हेतु /start भेजें।",
+        "confirmation": (
+            "✅ बुकिंग की पुष्टि हो गई है!\n\n"
+            "👤 किसान का नाम: *{farmer_name}*\n"
+            "🆔 किसान आईडी: *{farmer_id}*\n"
+            "🌾 फसल: *{crop}*\n"
+            "⚖️ मात्रा: *{quantity:g} क्विंटल*\n"
+            "🏢 केंद्र: *{center}*\n"
+            "🕒 समय स्लॉट: *{time}*\n"
+            "🎫 टोकन कोड: *{token}*\n"
+            "{sub_queue_line}"
+            "{payout_line}"
+            "{maps_line}\n"
+            "कृपया केंद्र के गेट पर नीचे दिया गया क्यूआर कोड दिखाएं।"
+        ),
+        "sub_queue_line": "🔢 कतार स्थिति: *{sub_queue_id}*\n",
+        "payout_line": "💰 एमएसपी दर: ₹{rate:,}/क्विंटल\n💳 अनुमानित भुगतान: ₹{payout:,.0f} (सांकेतिक)\n",
+        "maps_line": "🗺️ रास्ता देखें: {url}\n",
+        "qr_caption": "🎫 टोकन {token} — गेट चेक-इन पर यह क्यूआर कोड दिखाएं।",
+        "help_text": (
+            "/start — नई बुकिंग शुरू करें\n"
+            "/cancel — वर्तमान बुकिंग रद्द करें\n"
+            "/help — यह संदेश दिखाएं"
+        ),
+        "cancelled": "रद्द किया गया। फिर से शुरू करने के लिए /start भेजें।",
+    },
+}
+
+
+def t(key: str, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> str:
+    lang = context.user_data.get("lang", "en")
+    template = TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key) or TRANSLATIONS["en"][key]
+    return template.format(**kwargs) if kwargs else template
+
+
+def escape_md(text: str) -> str:
+    """Escape legacy Telegram Markdown special characters in user-supplied text."""
+    return re.sub(r"([_*`\[\]])", r"\\\1", text)
+
+
+# --------------------------------------------------------------------------
+# Backend API helpers
+# --------------------------------------------------------------------------
 
 async def fetch_centers(crop: str) -> list:
-    """Fetches real-time center availability from backend with fallback to defaults."""
-    try:
-        async with httpx.AsyncClient(timeout=4) as client:
-            resp = await client.get(f"{API_BASE_URL}/centers", params={"crop": crop})
-            if resp.status_code == 200:
-                data = resp.json().get("centers", [])
-                if data:
-                    return data
-    except Exception as e:
-        logger.warning(f"Backend GET /centers unreachable ({e}), using default storage centers.")
-
-    return DEFAULT_CENTERS.get(crop, DEFAULT_CENTERS["Cereals"])
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{API_BASE_URL}/centers", params={"crop": crop})
+        resp.raise_for_status()
+        return resp.json()["centers"]
 
 
-async def book_center(farmer_name: str, farmer_id: str, center_id: int, quantity_quintals: float, crop: str):
-    """
-    Books slot via backend.
-    Sends entered quantity in Quintals under 'quantity_tons' field as expected by the unified backend engine.
-    """
+async def book_center(farmer_name: str, farmer_id: str, center_id: int, quantity_quintals: float):
+    """Returns (result_dict, error_message). Exactly one will be None."""
     payload = {
         "farmer_name": farmer_name,
-        "farmer_id": str(farmer_id),
+        "farmer_id": farmer_id,
         "center_id": center_id,
-        "quantity_tons": float(quantity_quintals),  # Mapped to backend expectation
+        "quantity_tons": quantity_quintals,  # backend field name is misleading; value is quintals
     }
-
     try:
-        async with httpx.AsyncClient(timeout=4) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(f"{API_BASE_URL}/book", json=payload)
-            if resp.status_code == 200:
-                return resp.json(), None
-            elif resp.status_code in [400, 404, 422]:
-                detail = resp.json().get("detail", "Slot limit exceeded or center capacity full.")
-                return None, detail
-    except Exception as e:
-        logger.warning(f"Backend POST /book offline ({e}), generating demo pass.")
 
-    # Offline / Fallback Booking Mode
-    all_centers = DEFAULT_CENTERS.get("Cereals", []) + DEFAULT_CENTERS.get("Pulses", [])
-    matching_center = next((c for c in all_centers if c["id"] == center_id), None)
-    center_name = matching_center["name"] if matching_center else f"Procurement Center #{center_id}"
+        if resp.status_code == 200:
+            return resp.json(), None
 
-    token = str(random.randint(100000, 999999))
-    time_slot = random.choice(TIME_SLOTS[:2])
-    sub_queue_id = f"C{center_id}-S1-{random.randint(1, 15):02d}"
-
-    simulated_result = {
-        "status": "SUCCESS",
-        "token": token,
-        "center": center_name,
-        "time": time_slot,
-        "quantity_tons": quantity_quintals,
-        "sub_queue_id": sub_queue_id,
-        "message": "Center slot booked successfully!",
-    }
-    return simulated_result, None
+        try:
+            detail = resp.json().get("detail", "Something went wrong.")
+        except Exception:
+            detail = "Something went wrong."
+        return None, detail
+    except httpx.RequestError:
+        return None, "Unable to reach the server. Please check connection."
 
 
-# -----------------------------------------------------------------------------
-# Conversation Handlers
-# -----------------------------------------------------------------------------
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def make_qr_image(token: str) -> BytesIO:
+    qr = qrcode.make(f"AGROPROCURE:{token}")
+    bio = BytesIO()
+    bio.name = "token.png"
+    qr.save(bio, "PNG")
+    bio.seek(0)
+    return bio
+
+
+# --------------------------------------------------------------------------
+# Conversation steps
+# --------------------------------------------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Entry point: Starts registration flow."""
     context.user_data.clear()
+    keyboard = [
+        [
+            InlineKeyboardButton("🌾 English", callback_data="lang:en"),
+            InlineKeyboardButton("🇮🇳 हिंदी", callback_data="lang:hi"),
+        ]
+    ]
     await update.message.reply_text(
-        "🌾 *Welcome to AgroProcure Slot Booking System!*\n\n"
-        "Let's book your grain delivery pass.\n"
-        "Please enter your *Full Name*:",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardRemove(),
+        "🌐 Please choose your language / कृपया अपनी भाषा चुनें:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
+    return LANGUAGE
+
+
+async def language_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    lang = query.data.split(":", 1)[1]
+    context.user_data["lang"] = lang
+
+    await query.edit_message_text(t("name_prompt", context), parse_mode=ParseMode.MARKDOWN)
     return NAME
 
 
-async def name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores farmer name and requests ID."""
-    context.user_data["farmer_name"] = update.message.text.strip()
+async def name_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    name = update.message.text.strip()
+    if len(name) < 2 or not re.match(r"^[A-Za-z\u0900-\u097F .'-]+$", name):
+        await update.message.reply_text(t("name_invalid", context))
+        return NAME
+
+    context.user_data["farmer_name"] = name
     await update.message.reply_text(
-        f"Thank you, *{context.user_data['farmer_name']}*!\n\n"
-        "Now enter your *Farmer ID / Aadhaar / Registration Number*:",
-        parse_mode="Markdown",
+        t("farmer_id_prompt", context, name=escape_md(name)),
+        parse_mode=ParseMode.MARKDOWN,
     )
     return FARMER_ID
 
 
-async def farmer_id_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores farmer ID and asks for crop category selection."""
-    context.user_data["farmer_id"] = update.message.text.strip()
+async def farmer_id_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    farmer_id = update.message.text.strip()
+    if len(farmer_id) < 4 or not re.match(r"^[A-Za-z0-9]+$", farmer_id):
+        await update.message.reply_text(t("farmer_id_invalid", context))
+        return FARMER_ID
 
-    reply_keyboard = [["Cereals", "Pulses"]]
-    await update.message.reply_text(
-        "Select your *Crop Category*:",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, one_time_keyboard=True, resize_keyboard=True
-        ),
-    )
+    context.user_data["farmer_id"] = farmer_id
+
+    keyboard = [
+        [InlineKeyboardButton(t("crop_cereals", context), callback_data="crop:Cereals")],
+        [InlineKeyboardButton(t("crop_pulses", context), callback_data="crop:Pulses")],
+    ]
+    await update.message.reply_text(t("crop_prompt", context), reply_markup=InlineKeyboardMarkup(keyboard))
     return CROP
 
 
-async def crop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores crop choice and requests quantity in quintals."""
-    crop_choice = update.message.text.strip()
-    if crop_choice not in ["Cereals", "Pulses"]:
-        await update.message.reply_text("Please select either *Cereals* or *Pulses* using the buttons.")
-        return CROP
+async def crop_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    crop = query.data.split(":", 1)[1]
+    context.user_data["crop"] = crop
 
-    context.user_data["crop"] = crop_choice
-    await update.message.reply_text(
-        f"Selected Crop: *{crop_choice}*\n\n"
-        "Enter the estimated quantity to deposit in *Quintals* (e.g. 50):",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardRemove(),
+    row1 = [
+        InlineKeyboardButton(t("quantity_preset_btn", context, qty=q), callback_data=f"qty:{q}")
+        for q in QUANTITY_PRESETS[:3]
+    ]
+    row2 = [
+        InlineKeyboardButton(t("quantity_preset_btn", context, qty=q), callback_data=f"qty:{q}")
+        for q in QUANTITY_PRESETS[3:]
+    ]
+    row3 = [InlineKeyboardButton(t("quantity_custom_btn", context), callback_data="qty:other")]
+
+    await query.edit_message_text(
+        t("quantity_prompt", context),
+        reply_markup=InlineKeyboardMarkup([row1, row2, row3]),
     )
-    return QUANTITY
+    return QUANTITY_SELECT
 
 
-async def quantity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Validates entered quantity and prompts for location share."""
+async def quantity_button_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split(":", 1)[1]
+
+    if choice == "other":
+        await query.edit_message_text(t("quantity_custom_prompt", context))
+        return QUANTITY_CUSTOM
+
+    quantity = float(choice)
+    context.user_data["quantity"] = quantity
+    await query.edit_message_text(t("quantity_set", context, qty=quantity))
+    return await ask_for_location(update, context)
+
+
+async def quantity_custom_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
     try:
-        qty = float(update.message.text.strip())
-        if qty <= 0:
+        quantity = float(text)
+        if quantity <= 0:
             raise ValueError
-        context.user_data["quantity"] = qty
     except ValueError:
-        await update.message.reply_text("⚠️ Please enter a valid positive number for quantity in quintals:")
-        return QUANTITY
+        await update.message.reply_text(t("quantity_invalid", context))
+        return QUANTITY_CUSTOM
 
-    location_btn = [[KeyboardButton("📍 Share Current Location", request_location=True)]]
-    await update.message.reply_text(
-        f"Quantity Recorded: *{qty} Quintals*\n\n"
-        "Please share your location to find nearby procurement centers:",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(location_btn, one_time_keyboard=True, resize_keyboard=True),
+    context.user_data["quantity"] = quantity
+    return await ask_for_location(update, context)
+
+
+async def ask_for_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    chat_id = update.effective_chat.id
+    keyboard = [
+        [KeyboardButton(t("share_location_btn", context), request_location=True)],
+    ]
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=t("location_prompt", context),
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
     return LOCATION
 
 
-async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Fetches available centers and prompts user to pick one."""
-    if update.message.location:
-        context.user_data["lat"] = update.message.location.latitude
-        context.user_data["lon"] = update.message.location.longitude
+async def _show_centers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Demo MVP behaviour: always shows the same backend centre list for the
+    chosen crop, regardless of the farmer's actual shared location. Real
+    distance sorting can be reinstated later once the backend returns
+    latitude/longitude (see haversine_km, kept below for that purpose)."""
+    crop = context.user_data.get("crop")
+    quantity = context.user_data.get("quantity")
 
-    crop = context.user_data.get("crop", "Cereals")
-    centers = await fetch_centers(crop)
-
-    if not centers:
-        await update.message.reply_text(
-            "⚠️ No active procurement centers available for this crop today. Please try again later.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+    try:
+        centers = await fetch_centers(crop)
+    except Exception:
+        await update.message.reply_text(t("server_error", context))
         return ConversationHandler.END
 
-    inline_keyboard = []
-    text_lines = ["📍 *Available Procurement Centers:*\n"]
+    open_centers = [c for c in centers if c["remaining_quintals"] >= quantity]
+    if not open_centers:
+        await update.message.reply_text(t("no_centers", context, crop=crop, qty=quantity))
+        return ConversationHandler.END
 
-    for c in centers:
-        c_id = c.get("id") or c.get("center_id")
-        c_name = c.get("name") or c.get("center_name")
-        rem_qtl = c.get("remaining_quintals", c.get("max_capacity_quintals", 1000.0))
+    open_centers.sort(key=lambda c: c["remaining_quintals"], reverse=True)
+    shown = open_centers[:3]
+    context.user_data["centers_by_id"] = {c["id"]: c for c in shown}
 
-        text_lines.append(f"• *{c_name}*\n  Remaining Space: `{rem_qtl:.1f} Qtl`\n")
-        inline_keyboard.append([InlineKeyboardButton(f"Select {c_name}", callback_data=f"center_{c_id}")])
+    keyboard = []
+    for c in shown:
+        label = t(
+            "center_line",
+            context,
+            name=c["name"],
+            dist="",
+            remaining=c["remaining_quintals"],
+            max=c["max_capacity_quintals"],
+        )
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"center:{c['id']}")])
 
-    await update.message.reply_text(
-        "\n".join(text_lines),
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard),
-    )
+    await update.message.reply_text(t("centers_heading_all", context), reply_markup=InlineKeyboardMarkup(keyboard))
     return CENTER_SELECT
 
 
-async def center_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Executes booking upon center selection and returns digital entry pass."""
+async def location_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.message.location:
+        # Anything other than a shared location at this step: re-prompt
+        return await ask_for_location(update, context)
+
+    await update.message.reply_text(t("found_location", context), reply_markup=ReplyKeyboardRemove())
+    return await _show_centers(update, context)
+
+
+async def center_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    center_id = int(query.data.split(":", 1)[1])
 
-    center_id = int(query.data.replace("center_", ""))
-    context.user_data["center_id"] = center_id
+    farmer_name = context.user_data.get("farmer_name")
+    farmer_id = context.user_data.get("farmer_id")
+    crop = context.user_data.get("crop")
+    quantity = context.user_data.get("quantity", 0)
 
-    result, error = await book_center(
-        farmer_name=context.user_data["farmer_name"],
-        farmer_id=context.user_data["farmer_id"],
-        center_id=center_id,
-        quantity_quintals=context.user_data["quantity"],
-        crop=context.user_data["crop"],
-    )
+    result, error = await book_center(farmer_name, farmer_id, center_id, quantity)
 
     if error:
-        await query.edit_message_text(
-            f"❌ *Booking Failed*\n\nReason: {error}\n\nPlease start again with /start.",
-            parse_mode="Markdown",
-        )
+        await query.edit_message_text(t("booking_failed", context, error=error))
         return ConversationHandler.END
 
-    token = result.get("token", "N/A")
-    center_name = result.get("center", f"Center #{center_id}")
-    time_slot = result.get("time", "09:00 AM - 11:00 AM")
-    sub_queue_id = result.get("sub_queue_id", "Q-01")
+    sub_queue_line = ""
+    sub_queue_id = result.get("sub_queue_id")
+    if sub_queue_id:
+        sub_queue_line = t("sub_queue_line", context, sub_queue_id=sub_queue_id)
 
-    pass_message = (
-        "✅ *BOOKING CONFIRMED — AGROPROCURE PASS*\n"
-        "───────────────────────────────\n"
-        f"👤 *Farmer Name:* {context.user_data['farmer_name']}\n"
-        f"🆔 *Farmer ID:* `{context.user_data['farmer_id']}`\n"
-        f"🌾 *Crop:* {context.user_data['crop']}\n"
-        f"⚖️ *Quantity:* {context.user_data['quantity']} Quintals\n"
-        f"🏢 *Center:* {center_name}\n"
-        f"⏰ *Time Slot:* `{time_slot}`\n"
-        f"🔢 *Sub-Queue ID:* `{sub_queue_id}`\n"
-        "───────────────────────────────\n"
-        f"🎫 *ENTRY TOKEN CODE:* `{token}`\n"
-        "───────────────────────────────\n"
-        "📌 *Instructions:* Please present this token code at the entry gate check-in counter."
+    payout_line = ""
+    msp_rate = MSP_PER_QUINTAL.get(crop)
+    if msp_rate:
+        booked_qty = result.get("quantity_tons", quantity)  # actually quintals, see module docstring
+        payout = msp_rate * booked_qty
+        payout_line = t("payout_line", context, rate=msp_rate, payout=payout)
+
+    maps_line = ""
+    lat, lon = result.get("latitude"), result.get("longitude")
+    if lat is not None and lon is not None:
+        url = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}"
+        maps_line = t("maps_line", context, url=url)
+
+    confirmation_text = t(
+        "confirmation",
+        context,
+        farmer_name=escape_md(farmer_name),
+        farmer_id=escape_md(farmer_id),
+        crop=crop,
+        quantity=result.get("quantity_tons", quantity),
+        center=result.get("center", ""),
+        time=result.get("time", ""),
+        token=result.get("token", ""),
+        sub_queue_line=sub_queue_line,
+        payout_line=payout_line,
+        maps_line=maps_line,
     )
 
-    await query.edit_message_text(pass_message, parse_mode="Markdown")
+    await query.edit_message_text(confirmation_text, parse_mode=ParseMode.MARKDOWN)
+
+    qr_image = make_qr_image(result["token"])
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=qr_image,
+        caption=t("qr_caption", context, token=result["token"]),
+    )
+
+    context.user_data.clear()
     return ConversationHandler.END
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(t("help_text", context))
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancels the current booking flow."""
-    await update.message.reply_text(
-        "Booking process cancelled. Type /start whenever you wish to book a slot.",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    text = t("cancelled", context)
+    context.user_data.clear()
+    await update.message.reply_text(text, reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
-# -----------------------------------------------------------------------------
-# Main Runner
-# -----------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Entrypoint
+# --------------------------------------------------------------------------
 
-def main():
-    if BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
-        logger.error("Please set TELEGRAM_BOT_TOKEN environment variable before running!")
-        return
+def main() -> None:
+    if not BOT_TOKEN:
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is not set. Copy .env.example to .env and add your token."
+        )
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    conv_handler = ConversationHandler(
+    conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name_handler)],
-            FARMER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, farmer_id_handler)],
-            CROP: [MessageHandler(filters.TEXT & ~filters.COMMAND, crop_handler)],
-            QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_handler)],
-            LOCATION: [
-                MessageHandler(filters.LOCATION, location_handler),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, location_handler),
-            ],
-            CENTER_SELECT: [CallbackQueryHandler(center_select_callback, pattern="^center_")],
+            LANGUAGE: [CallbackQueryHandler(language_chosen, pattern="^lang:")],
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name_received)],
+            FARMER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, farmer_id_received)],
+            CROP: [CallbackQueryHandler(crop_chosen, pattern="^crop:")],
+            QUANTITY_SELECT: [CallbackQueryHandler(quantity_button_chosen, pattern="^qty:")],
+            QUANTITY_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, quantity_custom_received)],
+            LOCATION: [MessageHandler((filters.LOCATION | filters.TEXT) & ~filters.COMMAND, location_step)],
+            CENTER_SELECT: [CallbackQueryHandler(center_chosen, pattern="^center:")],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
+        per_message=False,
     )
+    app.add_handler(conv)
+    app.add_handler(CommandHandler("help", help_command))
 
-    app.add_handler(conv_handler)
-
-    logger.info("AgroProcure Telegram Bot started successfully...")
+    logger.info("Bot starting, polling for updates against %s ...", API_BASE_URL)
     app.run_polling()
 
 
