@@ -6,8 +6,10 @@ AgroProcure Unified Backend API
 """
 
 import datetime
+import logging
 import random
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,9 +17,14 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+logger = logging.getLogger("agroprocure")
+
 load_dotenv()
 
-app = FastAPI(title="AgroProcure Unified API (Supabase API Engine)", version="2.0.0")
+app = FastAPI(
+    title="AgroProcure Unified API (Supabase API Engine)",
+    version="2.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,12 +38,97 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_PUBLISHABLE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("WARNING: SUPABASE_URL or SUPABASE_SECRET_KEY is missing. Add them to .env.")
+    logger.warning("SUPABASE_URL or SUPABASE_SECRET_KEY is missing. Add them to sih-backend/.env (see .env.example).")
 
 def get_supabase() -> Client:
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise HTTPException(status_code=500, detail="Supabase not configured in .env")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+# Required tables and, for each, the columns the backend actually reads/writes.
+# Missing tables/columns are detected at startup so failures surface clearly
+# instead of as cryptic errors on the first real request.
+REQUIRED_SCHEMA = {
+    "bookings": [
+        "id", "token", "farmer_name", "farmer_id", "center_id", "center_name",
+        "slot_id", "crop", "quantity_quintals", "quantity_tons",
+        "time_slot", "sub_queue_id", "booking_date", "status",
+    ],
+    "procurement_plans": [
+        "id", "date", "center_id", "center_name", "category", "limit_tons",
+    ],
+    "slots": [
+        "id", "center", "crop", "time", "max_capacity",
+    ],
+}
+
+
+def verify_supabase_config() -> list[str]:
+    """Returns a list of human-readable configuration problems (empty if OK)."""
+    problems = []
+    missing = []
+    if not SUPABASE_URL:
+        missing.append("SUPABASE_URL")
+    if not SUPABASE_KEY:
+        missing.append("SUPABASE_SECRET_KEY (or SUPABASE_PUBLISHABLE_KEY)")
+    if missing:
+        problems.append(
+            "Supabase not configured: missing " + ", ".join(missing)
+            + ". Add them to sih-backend/.env (see .env.example). "
+            + "Until then every /centers and /book call will return HTTP 500."
+        )
+    return problems
+
+
+def verify_supabase_schema(supabase: Client) -> list[str]:
+    """Verifies the required tables/columns exist. Returns problems (empty if OK)."""
+    problems = []
+    for table, columns in REQUIRED_SCHEMA.items():
+        try:
+            # Fetching a single row proves the table exists; selecting a
+            # required column proves that column exists (PostgREST errors on
+            # unknown tables/columns).
+            column = columns[0]
+            supabase.table(table).select(column).limit(1).execute()
+        except Exception as e:
+            problems.append(f"Table '{table}' not usable: {e}")
+            continue
+
+        for col in columns[1:]:
+            try:
+                supabase.table(table).select(col).limit(1).execute()
+            except Exception as e:
+                problems.append(f"Table '{table}' is missing required column '{col}' ({e})")
+    return problems
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Runs prerequisite checks on startup. Logs clear warnings (does not
+    prevent the server from booting, but flags broken setup immediately)."""
+    config_problems = verify_supabase_config()
+    if config_problems:
+        for p in config_problems:
+            logger.warning("[STARTUP CHECK] %s", p)
+    else:
+        logger.info("[STARTUP CHECK] Supabase config present.")
+
+        try:
+            client = get_supabase()
+            schema_problems = verify_supabase_schema(client)
+            if schema_problems:
+                for p in schema_problems:
+                    logger.warning("[STARTUP CHECK] %s", p)
+            else:
+                logger.info("[STARTUP CHECK] Supabase schema verified OK.")
+        except Exception as e:
+            logger.error("[STARTUP CHECK] Could not reach Supabase to verify schema: %s", e)
+
+    yield
+
+
+app.router.lifespan_context = lifespan
 
 TIME_SLOTS = [
     "09:00 AM - 11:00 AM",
