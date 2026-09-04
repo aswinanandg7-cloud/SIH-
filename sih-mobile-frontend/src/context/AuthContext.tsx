@@ -1,179 +1,91 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import type { User, AuthState, KeycloakTokenResponse, KeycloakJWTPayload } from '../types/auth';
+import { createClient } from '@supabase/supabase-js';
+import type { Session } from '@supabase/supabase-js';
+import type { User, AuthState } from '../types/auth';
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://zexopndvszrerifbizyt.supabase.co';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_ja7dpfyqvl26lmJtsZSYcg_X2UIiioD';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 interface AuthContextType extends AuthState {
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   clearError: () => void;
-  keycloakUrl: string;
-  realm: string;
-  setRealm: (realm: string) => void;
-  clientId: string;
-  setClientId: (clientId: string) => void;
   demoLogin: (role: 'govt-agri-officer' | 'govt-agri-clerk' | 'general-user') => void;
 }
 
-const DEFAULT_KEYCLOAK_URL = 'http://localhost:8080';
-const DEFAULT_REALM = 'master';
-const DEFAULT_CLIENT_ID = 'sih-frontend';
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// Helper function to decode JWT payload safely
-function parseJwt(token: string): KeycloakJWTPayload | null {
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    return JSON.parse(jsonPayload);
-  } catch (error) {
-    console.error('Failed to parse JWT token', error);
-    return null;
-  }
-}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [keycloakUrl] = useState<string>(DEFAULT_KEYCLOAK_URL);
-  const [realm, setRealm] = useState<string>(
-    localStorage.getItem('kc_realm') || DEFAULT_REALM
-  );
-  const [clientId, setClientId] = useState<string>(
-    localStorage.getItem('kc_client_id') || DEFAULT_CLIENT_ID
-  );
-
-  // Restore session from localStorage if present
+  // Initialize session from Supabase
   useEffect(() => {
-    const storedToken = localStorage.getItem('kc_access_token');
-    const storedUser = localStorage.getItem('kc_user_data');
-
-    if (storedToken && storedUser) {
-      try {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-      } catch {
-        localStorage.removeItem('kc_access_token');
-        localStorage.removeItem('kc_user_data');
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        handleSession(session);
       }
-    }
+      setIsLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        handleSession(session);
+      } else {
+        setUser(null);
+        setToken(null);
+      }
+      setIsLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const handleRealmChange = (newRealm: string) => {
-    setRealm(newRealm);
-    localStorage.setItem('kc_realm', newRealm);
+  const handleSession = (session: Session) => {
+    setToken(session.access_token);
+    
+    // Extract roles from user metadata
+    const rawRoles = session.user.user_metadata?.roles || session.user.app_metadata?.roles || [];
+    const roles = Array.isArray(rawRoles) ? rawRoles : [rawRoles];
+    
+    setUser({
+      username: session.user.email?.split('@')[0] || 'user',
+      name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+      email: session.user.email || '',
+      roles: roles,
+    });
   };
 
-  const handleClientIdChange = (newClientId: string) => {
-    setClientId(newClientId);
-    localStorage.setItem('kc_client_id', newClientId);
-  };
-
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     setAuthError(null);
 
-    // Use relative path for proxied local Keycloak requests to bypass browser CORS policies
-    const tokenEndpoint = keycloakUrl.includes('localhost:8080')
-      ? `/realms/${realm}/protocol/openid-connect/token`
-      : `${keycloakUrl.replace(/\/$/, '')}/realms/${realm}/protocol/openid-connect/token`;
+    // Support usernames by appending a default domain if no @ is present
+    const loginEmail = email.includes('@') ? email : `${email}@agri.gov.in`;
 
-    try {
-      const formData = new URLSearchParams();
-      formData.append('grant_type', 'password');
-      formData.append('client_id', clientId);
-      formData.append('username', username);
-      formData.append('password', password);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: loginEmail,
+      password,
+    });
 
-      const response = await fetch(tokenEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData.toString(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        let errorData: any = null;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          // Response was not JSON
-        }
-
-        console.warn('Keycloak authentication error details:', response.status, errorData || errorText);
-
-        let errorMessage = errorData?.error_description || errorData?.error;
-
-        if (!errorMessage) {
-          if (response.status === 403) {
-            errorMessage = '403 Forbidden: Keycloak rejected the request. Ensure "Direct Access Grants" is enabled for your client in Keycloak, or check your Client ID in Keycloak Settings below.';
-          } else if (response.status === 401) {
-            errorMessage = '401 Unauthorized: Invalid username or password.';
-          } else {
-            errorMessage = `Keycloak returned status ${response.status}. ${errorText}`;
-          }
-        } else if (errorData?.error === 'unauthorized_client') {
-          errorMessage = `Unauthorized Client: ${errorData.error_description || 'Direct Access Grants are not enabled for this Keycloak client.'}`;
-        }
-
-        setAuthError(errorMessage);
-        setIsLoading(false);
-        return false;
-      }
-
-      const data: KeycloakTokenResponse = await response.json();
-      const accessToken = data.access_token;
-      const parsedPayload = parseJwt(accessToken);
-
-      // Extract roles from realm_access and resource_access
-      const realmRoles = parsedPayload?.realm_access?.roles || [];
-      let clientRoles: string[] = [];
-      if (parsedPayload?.resource_access) {
-        Object.values(parsedPayload.resource_access).forEach((res) => {
-          if (res?.roles) {
-            clientRoles = [...clientRoles, ...res.roles];
-          }
-        });
-      }
-
-      const allRoles = Array.from(new Set([...realmRoles, ...clientRoles]));
-
-      const userData: User = {
-        username: parsedPayload?.preferred_username || username,
-        name: parsedPayload?.name || username,
-        email: parsedPayload?.email || '',
-        roles: allRoles,
-      };
-
-      setToken(accessToken);
-      setUser(userData);
-
-      localStorage.setItem('kc_access_token', accessToken);
-      localStorage.setItem('kc_user_data', JSON.stringify(userData));
-
-      setIsLoading(false);
-      return true;
-    } catch (err: any) {
-      console.error('Keycloak authentication network error:', err);
-      setAuthError(
-        `Unable to reach Keycloak at ${keycloakUrl}. Make sure Keycloak is running at http://localhost:8080 or test using Demo Mode below.`
-      );
+    if (error) {
+      console.warn('Supabase auth error:', error.message);
+      setAuthError(`Authentication Failed: ${error.message}`);
       setIsLoading(false);
       return false;
     }
+    
+    if (data.session) {
+      handleSession(data.session);
+    }
+    setIsLoading(false);
+    return true;
   };
 
-  // Demo login for testing when local Keycloak instance is offline or for quick preview
   const demoLogin = (role: 'govt-agri-officer' | 'govt-agri-clerk' | 'general-user') => {
     setIsLoading(true);
     setAuthError(null);
@@ -210,17 +122,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setToken('demo_jwt_token_simulation');
       setUser(demoUser);
-      localStorage.setItem('kc_access_token', 'demo_jwt_token_simulation');
-      localStorage.setItem('kc_user_data', JSON.stringify(demoUser));
+      setIsLoading(false);
     }, 600);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     setToken(null);
     setAuthError(null);
-    localStorage.removeItem('kc_access_token');
-    localStorage.removeItem('kc_user_data');
   };
 
   const clearError = () => setAuthError(null);
@@ -236,11 +146,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         logout,
         clearError,
-        keycloakUrl,
-        realm,
-        setRealm: handleRealmChange,
-        clientId,
-        setClientId: handleClientIdChange,
         demoLogin,
       }}
     >
