@@ -14,7 +14,7 @@ export const AccessDenied: React.FC = () => {
 
         <h1 className="denied-title">Access Restricted</h1>
         <p className="denied-subtitle">
-          Your Keycloak account (<strong>{user?.username}</strong>) does not have the required permission to access the Procurement Planning Module.
+          Your account (<strong>{user?.username}</strong>) does not have the required permission to access the Procurement Planning Module.
         </p>
 
         <div className="required-role-box">
@@ -23,7 +23,7 @@ export const AccessDenied: React.FC = () => {
         </div>
 
         <div className="user-roles-box">
-          <span className="user-roles-title">Your Assigned Keycloak Roles:</span>
+          <span className="user-roles-title">Your Assigned Roles:</span>
           <div className="roles-list">
             {user?.roles && user.roles.length > 0 ? (
               user.roles.map((role) => (
@@ -32,7 +32,7 @@ export const AccessDenied: React.FC = () => {
                 </span>
               ))
             ) : (
-              <span className="no-roles-text">No active roles found in Keycloak token</span>
+              <span className="no-roles-text">No active roles found in token</span>
             )}
           </div>
         </div>

@@ -111,7 +111,7 @@ export const ClerkDashboard: React.FC = () => {
     else if (!liveData) setLiveLoading(true);
     setLiveError(null);
     try {
-      const res = await fetch('/api/live-report');
+      const res = await fetch(`/api/live-report?_t=${Date.now()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: LiveReportData = await res.json();
       setLiveData(data);
@@ -128,7 +128,7 @@ export const ClerkDashboard: React.FC = () => {
   useEffect(() => {
     if (activeTab === 'live') {
       fetchLiveReport();
-      liveIntervalRef.current = setInterval(() => fetchLiveReport(), 30_000);
+      liveIntervalRef.current = setInterval(() => fetchLiveReport(), 5000);
     } else {
       if (liveIntervalRef.current) {
         clearInterval(liveIntervalRef.current);

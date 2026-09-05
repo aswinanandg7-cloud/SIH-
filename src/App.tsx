@@ -13,7 +13,7 @@ const MainContent: React.FC = () => {
     return (
       <div className="app-loading-screen">
         <div className="app-spinner"></div>
-        <p>Connecting to Keycloak...</p>
+        <p>Connecting...</p>
       </div>
     );
   }
